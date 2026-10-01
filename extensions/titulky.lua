@@ -9,13 +9,14 @@ The "primary" (first) release of a title is read from the page text with
 a heuristic rather than from structured markup, so its release tag is
 occasionally slightly off; the alternates are parsed normally.
 
-Logs in fresh on every request (no session caching).
+The login is reused between clicks (see hf_login in the download handling
+block); login() itself always starts from an empty cookie jar.
 ]]
 
 function descriptor()
 	return {
-		title = "Titulky.com Subtitles v1.1.2",
-		version = "1.1.2",
+		title = "Titulky.com Subtitles v1.2.0",
+		version = "1.2.0",
 		author = "Highflight Studio",
 		shortdesc = "Titulky.com subtitles (premium)",
 		description = "Search premium.titulky.com and download/apply subtitles.",
@@ -61,6 +62,14 @@ HF_CURL_PAGE / HF_CURL_DOWNLOAD are time limits for every curl call, so a
 site that stops answering can't freeze VLC for good. hf_post_file hands
 POST data to curl through a temporary file, so passwords never appear on
 a command line (where other programs could read them).
+
+Login reuse (hf_login / hf_login_refresh): a successful login (the cookie
+jar) is reused until it has gone unused for HF_LOGIN_REUSE_SECONDS,
+instead of logging in on every click. Fewer requests per click also keeps
+each step well away from the ~10 s that makes VLC 3 hang on Windows. If a
+page then looks logged out, the caller asks hf_login_refresh for one
+fresh login and tries again. hf_remember_credentials saves the login only
+when it changed (on Windows every save runs PowerShell, about 1 s).
 ]]
 
 local HF_MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
@@ -113,6 +122,54 @@ local function hf_write(path, data)
 	f:write(data)
 	f:close()
 	return true
+end
+
+local HF_LOGIN_REUSE_SECONDS = 15 * 60
+local hf_login_user, hf_login_used_at, hf_login_reused = nil, 0, false
+local hf_saved_user, hf_saved_pass = nil, nil
+
+-- Logs in with login_fn(username, password) unless an earlier login of
+-- the same user can be reused. Returns true when logged in.
+local function hf_login(username, password, login_fn)
+	if hf_login_user == username and os.time() - hf_login_used_at < HF_LOGIN_REUSE_SECONDS then
+		hf_login_used_at = os.time()
+		hf_login_reused = true
+		return true
+	end
+	hf_login_reused = false
+	if login_fn(username, password) then
+		hf_login_user, hf_login_used_at = username, os.time()
+		return true
+	end
+	hf_login_user = nil
+	return false
+end
+
+-- Call when a result looks logged out. If the last hf_login only reused an
+-- earlier login, logs in fresh and returns true: try the request again.
+local function hf_login_refresh(tag, username, password, login_fn)
+	if not hf_login_reused then return false end
+	hf_log(tag, "reused login looks expired, logging in again")
+	hf_login_user = nil
+	return hf_login(username, password, login_fn)
+end
+
+-- Saves the login with save_fn only when it differs from the last saved or
+-- loaded one. Call with save_fn = nil to just record what was loaded.
+local function hf_remember_credentials(save_fn, username, password)
+	if username == hf_saved_user and password == hf_saved_pass then return end
+	if save_fn then save_fn(username, password) end
+	hf_saved_user, hf_saved_pass = username, password
+end
+
+-- true when a downloaded file is a web page (e.g. a login page) rather
+-- than a subtitle or zip
+local function hf_looks_like_page(path)
+	local f = io.open(path, "rb")
+	if not f then return false end
+	local head = f:read(512) or ""
+	f:close()
+	return string.match(head, "^%s*<") ~= nil or string.find(string.lower(head), "<html", 1, true) ~= nil
 end
 
 -- Writes POST data to a temporary file. Returns the curl option that sends
@@ -433,11 +490,12 @@ end
 -- VERSION_TAG: shown in the dialog's title bar. Keep it in step with
 -- descriptor().version; if the title bar shows an old version, VLC is
 -- still running an old copy of this file.
-local VERSION_TAG = "v1.1.2"
+local VERSION_TAG = "v1.2.0"
 
 function show_dialog()
 	dlg = vlc.dialog("Titulky.com Subtitles (" .. VERSION_TAG .. ")")
 	local saved_username, saved_password = load_credentials()
+	hf_remember_credentials(nil, saved_username, saved_password)
 	local guessed_title = guess_title_from_playing()
 
 	-- Width/height on add_text_input/add_password/add_list are only hints
@@ -861,25 +919,31 @@ function do_search()
 		return
 	end
 
-	save_credentials(username, password)
+	hf_remember_credentials(save_credentials, username, password)
 
 	status_label:set_text("Logging in...")
 	dlg:update()
-	if not login(username, password) then
+	if not hf_login(username, password, login) then
 		status_label:set_text("Login failed (see debug log) - check username/password.")
 		return
 	end
 
 	status_label:set_text("Searching...")
 	dlg:update()
-	local html = get("https://premium.titulky.com/?Fulltext=" .. urlencode(query)
-			.. "&exact=&Autor=&Rok=&IMDB=&Serial=&Jazyk=&ASchvalene=&action=search")
+	local search_url = "https://premium.titulky.com/?Fulltext=" .. urlencode(query)
+		.. "&exact=&Autor=&Rok=&IMDB=&Serial=&Jazyk=&ASchvalene=&action=search"
+	local html = get(search_url)
 	if html == nil then
 		status_label:set_text("Search request failed to run (see debug log).")
 		return
 	end
 
 	local titles = parse_premium_titles(html)
+	if #titles == 0 and string.find(html, "Odhlásit", 1, true) == nil
+		and hf_login_refresh("[Titulky]", username, password, login) then
+		html = get(search_url)
+		titles = html and parse_premium_titles(html) or {}
+	end
 
 	if #titles == 0 then
 		sub_rows = {}
@@ -907,13 +971,19 @@ function show_releases_for_title(id, title)
 	status_label:set_text("Loading releases...")
 	dlg:update()
 
-	local html = get("https://premium.titulky.com/?action=detail&id=" .. urlencode(id))
+	local detail_url = "https://premium.titulky.com/?action=detail&id=" .. urlencode(id)
+	local html = get(detail_url)
 	if html == nil then
 		status_label:set_text("Couldn't load releases (see debug log).")
 		return
 	end
 
 	sub_rows = parse_premium_detail(html, id, title)
+	if #sub_rows == 0 and string.find(html, "Odhlásit", 1, true) == nil
+		and hf_login_refresh("[Titulky]", user_input:get_text(), pass_input:get_text(), login) then
+		html = get(detail_url)
+		sub_rows = html and parse_premium_detail(html, id, title) or {}
+	end
 	for _, row in ipairs(sub_rows) do row.kind = "release" end
 
 	results_list:clear()
@@ -951,6 +1021,10 @@ function do_download_start()
 	local cmd = string.format('curl -sS -L %s -b "%s" -o "%s" "https://premium.titulky.com/download.php?id=%s"', HF_CURL_DOWNLOAD,
 		cookie_jar(), zip_path, urlencode(row.id))
 	local out, err = run(cmd)
+	if out ~= nil and hf_looks_like_page(zip_path)
+		and hf_login_refresh("[Titulky]", user_input:get_text(), pass_input:get_text(), login) then
+		out, err = run(cmd)
+	end
 	if out == nil then
 		status_label:set_text("curl did not run: " .. tostring(err))
 		return

@@ -12,13 +12,14 @@ Site notes:
   submit (not the "Zkopírovat URL" button next to it), and that exact POST
   is what gets sent.
 
-Logs in fresh on every request (no session caching).
+The login is reused between clicks (see hf_login in the download handling
+block); login() itself always starts from an empty cookie jar.
 ]]
 
 function descriptor()
 	return {
-		title = "WoSir Subtitles v1.1.2",
-		version = "1.1.2",
+		title = "WoSir Subtitles v1.2.0",
+		version = "1.2.0",
 		author = "Highflight Studio",
 		shortdesc = "WoSir subtitles",
 		description = "Search wosir.cz and download/apply subtitles.",
@@ -65,6 +66,14 @@ HF_CURL_PAGE / HF_CURL_DOWNLOAD are time limits for every curl call, so a
 site that stops answering can't freeze VLC for good. hf_post_file hands
 POST data to curl through a temporary file, so passwords never appear on
 a command line (where other programs could read them).
+
+Login reuse (hf_login / hf_login_refresh): a successful login (the cookie
+jar) is reused until it has gone unused for HF_LOGIN_REUSE_SECONDS,
+instead of logging in on every click. Fewer requests per click also keeps
+each step well away from the ~10 s that makes VLC 3 hang on Windows. If a
+page then looks logged out, the caller asks hf_login_refresh for one
+fresh login and tries again. hf_remember_credentials saves the login only
+when it changed (on Windows every save runs PowerShell, about 1 s).
 ]]
 
 local HF_MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
@@ -117,6 +126,54 @@ local function hf_write(path, data)
 	f:write(data)
 	f:close()
 	return true
+end
+
+local HF_LOGIN_REUSE_SECONDS = 15 * 60
+local hf_login_user, hf_login_used_at, hf_login_reused = nil, 0, false
+local hf_saved_user, hf_saved_pass = nil, nil
+
+-- Logs in with login_fn(username, password) unless an earlier login of
+-- the same user can be reused. Returns true when logged in.
+local function hf_login(username, password, login_fn)
+	if hf_login_user == username and os.time() - hf_login_used_at < HF_LOGIN_REUSE_SECONDS then
+		hf_login_used_at = os.time()
+		hf_login_reused = true
+		return true
+	end
+	hf_login_reused = false
+	if login_fn(username, password) then
+		hf_login_user, hf_login_used_at = username, os.time()
+		return true
+	end
+	hf_login_user = nil
+	return false
+end
+
+-- Call when a result looks logged out. If the last hf_login only reused an
+-- earlier login, logs in fresh and returns true: try the request again.
+local function hf_login_refresh(tag, username, password, login_fn)
+	if not hf_login_reused then return false end
+	hf_log(tag, "reused login looks expired, logging in again")
+	hf_login_user = nil
+	return hf_login(username, password, login_fn)
+end
+
+-- Saves the login with save_fn only when it differs from the last saved or
+-- loaded one. Call with save_fn = nil to just record what was loaded.
+local function hf_remember_credentials(save_fn, username, password)
+	if username == hf_saved_user and password == hf_saved_pass then return end
+	if save_fn then save_fn(username, password) end
+	hf_saved_user, hf_saved_pass = username, password
+end
+
+-- true when a downloaded file is a web page (e.g. a login page) rather
+-- than a subtitle or zip
+local function hf_looks_like_page(path)
+	local f = io.open(path, "rb")
+	if not f then return false end
+	local head = f:read(512) or ""
+	f:close()
+	return string.match(head, "^%s*<") ~= nil or string.find(string.lower(head), "<html", 1, true) ~= nil
 end
 
 -- Writes POST data to a temporary file. Returns the curl option that sends
@@ -432,8 +489,9 @@ local function guess_title_from_playing()
 end
 
 function show_dialog()
-	dlg = vlc.dialog("WoSir Subtitles v1.1.2")
+	dlg = vlc.dialog("WoSir Subtitles v1.2.0")
 	local saved_username, saved_password = load_credentials()
+	hf_remember_credentials(nil, saved_username, saved_password)
 	local guessed_title = guess_title_from_playing()
 
 	dlg:add_label("Username:", 1, 1, 1, 1)
@@ -778,24 +836,29 @@ function do_search()
 		return
 	end
 
-	save_credentials(username, password)
+	hf_remember_credentials(save_credentials, username, password)
 
 	status_label:set_text("Logging in...")
 	dlg:update()
-	if not login(username, password) then
+	if not hf_login(username, password, login) then
 		status_label:set_text("Login failed (see debug log) - check username/password.")
 		return
 	end
 
 	status_label:set_text("Searching...")
 	dlg:update()
-	local html = get("https://www.wosir.cz/preklady?search=" .. urlencode(query) .. "&search_sub=Hledat")
+	local search_url = "https://www.wosir.cz/preklady?search=" .. urlencode(query) .. "&search_sub=Hledat"
+	local html = get(search_url)
 	if html == nil then
 		status_label:set_text("Search request failed to run (see debug log).")
 		return
 	end
 
 	local matches = parse_search_results(html)
+	if #matches == 0 and hf_login_refresh("[WoSir]", username, password, login) then
+		html = get(search_url)
+		matches = html and parse_search_results(html) or {}
+	end
 	vlc.msg.dbg("[WoSir] search '" .. query .. "' -> " .. #matches .. " matches")
 
 	results_list:clear()
@@ -834,7 +897,7 @@ function do_view_subs()
 
 	local username = user_input:get_text()
 	local password = pass_input:get_text()
-	login(username, password)
+	hf_login(username, password, login)
 
 	local html = get(anime_url(anime_id))
 	if html == nil then
@@ -843,6 +906,10 @@ function do_view_subs()
 	end
 
 	sub_rows = parse_subtitle_rows(html)
+	if #sub_rows == 0 and hf_login_refresh("[WoSir]", username, password, login) then
+		html = get(anime_url(anime_id))
+		sub_rows = html and parse_subtitle_rows(html) or {}
+	end
 
 	results_list:clear()
 	for i, row in ipairs(sub_rows) do
@@ -878,7 +945,7 @@ function do_download()
 
 	local username = user_input:get_text()
 	local password = pass_input:get_text()
-	if not login(username, password) then
+	if not hf_login(username, password, login) then
 		status_label:set_text("Login failed - can't download (see debug log).")
 		return
 	end
@@ -900,6 +967,9 @@ function do_download()
 		HF_CURL_DOWNLOAD, cookie_jar(), cookie_jar(), url, post_data, body_file, url
 	)
 	local out, err = run(cmd)
+	if out ~= nil and hf_looks_like_page(body_file) and hf_login_refresh("[WoSir]", username, password, login) then
+		out, err = run(cmd)
+	end
 	if out == nil then
 		status_label:set_text("curl did not run: " .. tostring(err))
 		return
