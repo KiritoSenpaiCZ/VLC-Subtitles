@@ -75,6 +75,7 @@ local page_matches = {} -- [n] = {title=, label=, href=, slug=}
 local ep_rows = {}      -- [n] = {episode=, url=}
 local current_page = nil
 
+-- >>> shared block "platform" - edit dev/shared/platform.lua in VLC-Subtitles, then run dev/sync.py
 --[[ ---------------- platform helpers ---------------- ]]
 
 -- VLC doesn't provide the standard "package" table while it scans
@@ -199,10 +200,6 @@ local function subtitles_dir()
 	return join(home, "Documents", "VLC Subtitles")
 end
 
-local function catalog_file()
-	return join(vlc.config.userdatadir(), PREFIX .. "_catalog.txt")
-end
-
 -- deletes subtitles this extension saved more than SUB_MAX_AGE_DAYS ago;
 -- the save time is part of every file name (<prefix>_..._<unix time>.<ext>)
 local function cleanup_old_subtitles()
@@ -218,6 +215,11 @@ local function cleanup_old_subtitles()
 		end
 	end
 	if removed > 0 then log("cleanup: removed " .. removed .. " old subtitle file(s)") end
+end
+-- <<< shared block "platform"
+
+local function catalog_file()
+	return join(vlc.config.userdatadir(), PREFIX .. "_catalog.txt")
 end
 
 --[[ ---------------- text helpers ---------------- ]]
@@ -431,6 +433,7 @@ local function pause(seconds)
 	end
 end
 
+-- >>> shared block "zip_checks" - edit dev/shared/zip_checks.lua in VLC-Subtitles, then run dev/sync.py
 --[[ ---------------- download checks ---------------- ]]
 
 local function u16(s, i)
@@ -493,6 +496,21 @@ end
 
 local SUBTITLE_EXTS = { srt = true, ass = true, ssa = true, sub = true, vtt = true }
 
+local function attach_subtitle(path)
+	if not (vlc.input and vlc.input.item and vlc.input.add_subtitle) then return false end
+	local has_item_ok, has_item = pcall(vlc.input.item)
+	if not (has_item_ok and has_item) then return false end
+	local ok, res = pcall(vlc.input.add_subtitle, path, true)
+	if ok and res ~= false then return true end
+	-- some VLC builds want a URI rather than a plain path
+	if vlc.strings and vlc.strings.make_uri then
+		local ok2, res2 = pcall(vlc.input.add_subtitle, vlc.strings.make_uri(path), true)
+		return ok2 and res2 ~= false
+	end
+	return false
+end
+-- <<< shared block "zip_checks"
+
 -- extension from a Content-Disposition header, else from the content
 local function guess_extension(headers, data)
 	local fname = string.match(headers or "", '[Ff]ilename%*?=[^\r\n]-([^\'"\r\n;=]+%.%w+)')
@@ -522,20 +540,6 @@ local function extract_zip(zip_path, dest_dir)
 	end
 	if first_any then log("zip had no subtitle-looking file; first file was " .. first_any) end
 	return nil
-end
-
-local function attach_subtitle(path)
-	if not (vlc.input and vlc.input.item and vlc.input.add_subtitle) then return false end
-	local has_item_ok, has_item = pcall(vlc.input.item)
-	if not (has_item_ok and has_item) then return false end
-	local ok, res = pcall(vlc.input.add_subtitle, path, true)
-	if ok and res ~= false then return true end
-	-- some VLC builds want a URI rather than a plain path
-	if vlc.strings and vlc.strings.make_uri then
-		local ok2, res2 = pcall(vlc.input.add_subtitle, vlc.strings.make_uri(path), true)
-		return ok2 and res2 ~= false
-	end
-	return false
 end
 
 --[[ ---------------- dialog ---------------- ]]

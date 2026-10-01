@@ -16,14 +16,14 @@ Logs in fresh on every request (no session caching).
 ]]
 
 function descriptor()
-return {
-title = "WoSir Subtitles v1.1.1",
-version = "1.1.1",
-author = "Highflight Studio",
-shortdesc = "WoSir subtitles",
-description = "Search wosir.cz and download/apply subtitles.",
-capabilities = {}
-}
+	return {
+		title = "WoSir Subtitles v1.1.2",
+		version = "1.1.2",
+		author = "Highflight Studio",
+		shortdesc = "WoSir subtitles",
+		description = "Search wosir.cz and download/apply subtitles.",
+		capabilities = {}
+	}
 end
 
 local dlg = nil
@@ -42,7 +42,8 @@ local current_anime_id = nil
 -- they need
 local save_credentials, load_credentials
 
---[[ ---------------- download handling ----------------
+-- >>> shared block "hf_download" - edit dev/shared/hf_download.lua in VLC-Subtitles, then run dev/sync.py
+--[[ ---------------- download handling and curl helpers ----------------
 Everything here is prefixed hf_ so it can't clash with the rest of the
 file. Only local function definitions: VLC's startup scan provides almost
 no standard Lua functions, so nothing may be called at a file's top level.
@@ -59,12 +60,19 @@ What it does once a file has been downloaded (hf_finish):
   - removes the temporary files every time
 hf_cleanup_old deletes this extension's own files in that folder once
 they are older than HF_SUB_MAX_AGE_DAYS (the save time is in the name).
+
+HF_CURL_PAGE / HF_CURL_DOWNLOAD are time limits for every curl call, so a
+site that stops answering can't freeze VLC for good. hf_post_file hands
+POST data to curl through a temporary file, so passwords never appear on
+a command line (where other programs could read them).
 ]]
 
 local HF_MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
 local HF_MAX_EXTRACTED_BYTES = 200 * 1024 * 1024
 local HF_SUB_MAX_AGE_DAYS = 30
 local HF_SUB_EXTS = { srt = true, ass = true, ssa = true, sub = true, vtt = true }
+local HF_CURL_PAGE = "--connect-timeout 10 --max-time 20"
+local HF_CURL_DOWNLOAD = "--connect-timeout 10 --max-time 60"
 
 local hf_windows = nil
 local function hf_is_windows()
@@ -109,6 +117,14 @@ local function hf_write(path, data)
 	f:write(data)
 	f:close()
 	return true
+end
+
+-- Writes POST data to a temporary file. Returns the curl option that sends
+-- it, and the file to delete once curl has run.
+local function hf_post_file(prefix, data)
+	local path = hf_join(vlc.config.userdatadir(), prefix .. "_post.tmp")
+	hf_write(path, data)
+	return '--data-binary "@' .. path .. '"', path
 end
 
 local function hf_make_dir(tag, path)
@@ -324,8 +340,8 @@ local function hf_finish(o)
 		src = hf_extract(tag, zip_path, hf_join(work, "extract"), o.zip_password, encrypted)
 		if not src then
 			return done(encrypted
-				and "Couldn't unpack the zip - check the zip password (see debug log)."
-				or "Downloaded a zip but found no subtitle inside (see debug log).")
+					and "Couldn't unpack the zip - check the zip password (see debug log)."
+					or "Downloaded a zip but found no subtitle inside (see debug log).")
 		end
 		ext = string.lower(string.match(src, "%.(%w+)$") or "srt")
 	else
@@ -350,103 +366,104 @@ local function hf_finish(o)
 	end
 	return done("Saved to " .. final_path .. " (no video playing, open one and add it manually).")
 end
+-- <<< shared block "hf_download"
 
 function activate()
 	pcall(hf_cleanup_old, "[WoSir]", "wosir")
-show_dialog()
+	show_dialog()
 end
 
 function deactivate()
-if dlg then dlg:delete() end
+	if dlg then dlg:delete() end
 end
 
 function close()
-vlc.deactivate()
+	vlc.deactivate()
 end
 
 -- best-effort guess at a show title from the currently playing file,
 -- so the search box starts pre-filled
 local function guess_title_from_playing()
-if not (vlc.input and vlc.input.item) then return nil end
-local ok, item = pcall(vlc.input.item)
-if not ok or not item then return nil end
-local uri = item:uri()
-if not uri then return nil end
+	if not (vlc.input and vlc.input.item) then return nil end
+	local ok, item = pcall(vlc.input.item)
+	if not ok or not item then return nil end
+	local uri = item:uri()
+	if not uri then return nil end
 
-local name = string.match(uri, "([^/\\]+)$") or uri
-if vlc.strings and vlc.strings.decode_uri then
-name = vlc.strings.decode_uri(name)
-end
-name = string.gsub(name, "%.%w+$", "") -- drop file extension
-name = string.gsub(name, "%[[^%]]*%]", " ") -- drop [tags]
-name = string.gsub(name, "%([^%)]*%)", " ") -- drop (tags)
-name = string.gsub(name, "[%._]", " ") -- dots/underscores -> spaces
+	local name = string.match(uri, "([^/\\]+)$") or uri
+	if vlc.strings and vlc.strings.decode_uri then
+		name = vlc.strings.decode_uri(name)
+	end
+	name = string.gsub(name, "%.%w+$", "") -- drop file extension
+	name = string.gsub(name, "%[[^%]]*%]", " ") -- drop [tags]
+	name = string.gsub(name, "%([^%)]*%)", " ") -- drop (tags)
+	name = string.gsub(name, "[%._]", " ") -- dots/underscores -> spaces
 
--- release names pack a lot of extra info the site's search chokes on
--- (season/episode markers, resolution, source, codec, audio, release
--- group) - cut everything from the earliest one of these onward, so
--- "Show Name S02E01 1080p BluRay Dual-Audio Opus 2 0 x265-GROUP"
--- becomes just "Show Name"
-local lower = string.lower(name)
-local cut_at = string.find(lower, "s%d%d?e%d%d?")
-local keywords = {
-"2160p", "1080p", "720p", "480p", "4k",
-"blu%-ray", "bluray", "bdrip", "webrip", "web%-dl", "web dl",
-"hdtv", "dvdrip", "hdrip",
-"x264", "x265", "h264", "h265", "hevc", "avc",
-"dual audio", "dual%-audio", "multi audio", "multi%-audio",
-"aac", "flac", "dts", "opus",
-}
-for _, kw in ipairs(keywords) do
-local ks = string.find(lower, kw)
-if ks and (not cut_at or ks < cut_at) then cut_at = ks end
-end
-if cut_at then
-name = string.sub(name, 1, cut_at - 1)
-end
+	-- release names pack a lot of extra info the site's search chokes on
+	-- (season/episode markers, resolution, source, codec, audio, release
+	-- group) - cut everything from the earliest one of these onward, so
+	-- "Show Name S02E01 1080p BluRay Dual-Audio Opus 2 0 x265-GROUP"
+	-- becomes just "Show Name"
+	local lower = string.lower(name)
+	local cut_at = string.find(lower, "s%d%d?e%d%d?")
+	local keywords = {
+		"2160p", "1080p", "720p", "480p", "4k",
+		"blu%-ray", "bluray", "bdrip", "webrip", "web%-dl", "web dl",
+		"hdtv", "dvdrip", "hdrip",
+		"x264", "x265", "h264", "h265", "hevc", "avc",
+		"dual audio", "dual%-audio", "multi audio", "multi%-audio",
+		"aac", "flac", "dts", "opus",
+	}
+	for _, kw in ipairs(keywords) do
+		local ks = string.find(lower, kw)
+		if ks and (not cut_at or ks < cut_at) then cut_at = ks end
+	end
+	if cut_at then
+		name = string.sub(name, 1, cut_at - 1)
+	end
 
-name = string.gsub(name, "%s%-%s*%d+.*$", "") -- drop trailing "- 05..." episode marker
-name = string.gsub(name, "[%-–—]+%s*$", "") -- drop a leftover trailing dash
-name = string.gsub(name, "%s+", " ")
-name = string.match(name, "^%s*(.-)%s*$") -- trim
+	name = string.gsub(name, "%s%-%s*%d+.*$", "") -- drop trailing "- 05..." episode marker
+	name = string.gsub(name, "[%-–—]+%s*$", "") -- drop a leftover trailing dash
+	name = string.gsub(name, "%s+", " ")
+	name = string.match(name, "^%s*(.-)%s*$") -- trim
 
-if name == "" then return nil end
-return name
+	if name == "" then return nil end
+	return name
 end
 
 function show_dialog()
-dlg = vlc.dialog("WoSir Subtitles v1.1.1")
-local saved_username, saved_password = load_credentials()
-local guessed_title = guess_title_from_playing()
+	dlg = vlc.dialog("WoSir Subtitles v1.1.2")
+	local saved_username, saved_password = load_credentials()
+	local guessed_title = guess_title_from_playing()
 
-dlg:add_label("Username:", 1, 1, 1, 1)
-user_input = dlg:add_text_input(saved_username, 2, 1, 2, 1)
-dlg:add_label("Password:", 1, 2, 1, 1)
-pass_input = dlg:add_password(saved_password, 2, 2, 2, 1)
+	dlg:add_label("Username:", 1, 1, 1, 1)
+	user_input = dlg:add_text_input(saved_username, 2, 1, 2, 1)
+	dlg:add_label("Password:", 1, 2, 1, 1)
+	pass_input = dlg:add_password(saved_password, 2, 2, 2, 1)
 
-dlg:add_label("Search:", 1, 3, 1, 1)
-search_input = dlg:add_text_input(guessed_title or "", 2, 3, 2, 1)
-dlg:add_button("Search", do_search, 1, 4, 1, 1)
-dlg:add_button("View Subtitles", do_view_subs, 2, 4, 1, 1)
-dlg:add_button("Download Selected", do_download, 3, 4, 1, 1)
+	dlg:add_label("Search:", 1, 3, 1, 1)
+	search_input = dlg:add_text_input(guessed_title or "", 2, 3, 2, 1)
+	dlg:add_button("Search", do_search, 1, 4, 1, 1)
+	dlg:add_button("View Subtitles", do_view_subs, 2, 4, 1, 1)
+	dlg:add_button("Download Selected", do_download, 3, 4, 1, 1)
 
-results_list = dlg:add_list(1, 5, 3, 1)
-local initial_status = guessed_title
-and ("Guessed '" .. guessed_title .. "' from the playing file - edit if wrong, then Search.")
-or "Enter credentials + a show title, then Search."
-status_label = dlg:add_label(initial_status, 1, 6, 3, 1)
-dlg:show()
+	results_list = dlg:add_list(1, 5, 3, 1)
+	local initial_status = guessed_title
+		and ("Guessed '" .. guessed_title .. "' from the playing file - edit if wrong, then Search.")
+		or "Enter credentials + a show title, then Search."
+	status_label = dlg:add_label(initial_status, 1, 6, 3, 1)
+	dlg:show()
 end
 
 --[[ ---------------- helpers ---------------- ]]
 
 local function urlencode(str)
-if str == nil then return "" end
-str = string.gsub(str, "\n", "\r\n")
-str = string.gsub(str, "([^%w%-%_%.%~])", function(c)
-return string.format("%%%02X", string.byte(c))
-end)
-return str
+	if str == nil then return "" end
+	str = string.gsub(str, "\n", "\r\n")
+	str = string.gsub(str, "([^%w%-%_%.%~])", function(c)
+			return string.format("%%%02X", string.byte(c))
+		end)
+	return str
 end
 
 local function decode_entities(str)
@@ -480,48 +497,50 @@ local function decode_entities(str)
 	str = string.gsub(str, "&#[xX](%x+);", function(h) return utf8_char(tonumber(h, 16)) end)
 	str = string.gsub(str, "&#(%d+);", function(d) return utf8_char(tonumber(d)) end)
 	str = string.gsub(str, "&(%a+);", function(name)
-		local cp = named[name]
-		if cp then return utf8_char(cp) end
-		return nil -- unknown entity: leave it as it was
-	end)
+			local cp = named[name]
+			if cp then return utf8_char(cp) end
+			return nil -- unknown entity: leave it as it was
+		end)
 	return str
 end
 
 -- log_line, if given, is logged INSTEAD OF cmd - keeps credentials out of
 -- VLC's debug console
 local function run(cmd, log_line)
-vlc.msg.dbg("[WoSir] running: " .. (log_line or cmd))
-local p = io.popen(cmd, "r")
-if not p then return nil, "io.popen failed to start curl" end
-local out = p:read("*a")
-p:close()
-return out
+	vlc.msg.dbg("[WoSir] running: " .. (log_line or cmd))
+	local p = io.popen(cmd, "r")
+	if not p then return nil, "io.popen failed to start curl" end
+	local out = p:read("*a")
+	p:close()
+	return out
 end
 
 local function cookie_jar()
-return vlc.config.userdatadir() .. "/wosir_cookies.txt"
+	return vlc.config.userdatadir() .. "/wosir_cookies.txt"
 end
 
 local function is_windows()
-return package.config:sub(1, 1) == "\\"
+	return package.config:sub(1, 1) == "\\"
 end
 
 local function get(url, referer)
-local ref = referer and string.format(' -e "%s"', referer) or ""
-local cmd = string.format('curl -sS -L -b "%s" -c "%s"%s "%s"', cookie_jar(), cookie_jar(), ref, url)
-return run(cmd)
+	local ref = referer and string.format(' -e "%s"', referer) or ""
+	local cmd = string.format('curl -sS -L %s -b "%s" -c "%s"%s "%s"', HF_CURL_PAGE, cookie_jar(), cookie_jar(), ref, url)
+	return run(cmd)
 end
 
 local function post(url, data, referer, log_data)
-local ref = referer and string.format(' -e "%s"', referer) or ""
-local cmd = string.format('curl -sS -L -b "%s" -c "%s"%s -d "%s" "%s"', cookie_jar(), cookie_jar(), ref, data, url)
-local log_cmd = log_data and string.format('curl -sS -L -b "%s" -c "%s"%s -d "%s" "%s"',
-cookie_jar(), cookie_jar(), ref, log_data, url) or nil
-return run(cmd, log_cmd)
+	local ref = referer and string.format(' -e "%s"', referer) or ""
+	local data_opt, data_file = hf_post_file("wosir", data)
+	local cmd = string.format('curl -sS -L %s -b "%s" -c "%s"%s %s "%s"', HF_CURL_PAGE, cookie_jar(), cookie_jar(), ref, data_opt, url)
+	local log_cmd = log_data and (cmd .. " (data: " .. log_data .. ")") or nil
+	local out, err = run(cmd, log_cmd)
+	os.remove(data_file)
+	return out, err
 end
 
 local function extract_attr(attr_str, name)
-return string.match(attr_str, name .. '="([^"]*)"')
+	return string.match(attr_str, name .. '="([^"]*)"')
 end
 
 --[[ ---------------- credentials ----------------
@@ -531,116 +550,101 @@ DPAPI via a short-lived PowerShell temp script.
 ]]
 
 local function username_file()
-return vlc.config.userdatadir() .. "/wosir_username.txt"
-end
-
-local function old_creds_file()
-return vlc.config.userdatadir() .. "/wosir_credentials.txt"
+	return vlc.config.userdatadir() .. "/wosir_username.txt"
 end
 
 local function sh_dquote(s)
-s = string.gsub(s, "\\", "\\\\")
-s = string.gsub(s, '"', '\\"')
-s = string.gsub(s, "%$", "\\$")
-s = string.gsub(s, "`", "\\`")
-return '"' .. s .. '"'
+	s = string.gsub(s, "\\", "\\\\")
+	s = string.gsub(s, '"', '\\"')
+	s = string.gsub(s, "%$", "\\$")
+	s = string.gsub(s, "`", "\\`")
+	return '"' .. s .. '"'
 end
 
 local function ps_squote(s)
-return "'" .. string.gsub(s, "'", "''") .. "'"
+	return "'" .. string.gsub(s, "'", "''") .. "'"
 end
 
 local KEYCHAIN_SERVICE = "VLC WoSir Extension"
 
 local function mac_save_password(username, password)
-local cmd = string.format('security add-generic-password -a %s -s %s -w %s -U',
-sh_dquote(username), sh_dquote(KEYCHAIN_SERVICE), sh_dquote(password))
-local log_cmd = string.format('security add-generic-password -a %s -s %s -w *** -U',
-sh_dquote(username), sh_dquote(KEYCHAIN_SERVICE))
-run(cmd, log_cmd)
+	local cmd = string.format('security add-generic-password -a %s -s %s -w %s -U',
+		sh_dquote(username), sh_dquote(KEYCHAIN_SERVICE), sh_dquote(password))
+	local log_cmd = string.format('security add-generic-password -a %s -s %s -w *** -U',
+		sh_dquote(username), sh_dquote(KEYCHAIN_SERVICE))
+	run(cmd, log_cmd)
 end
 
 local function mac_load_password(username)
-if username == "" then return "" end
-local cmd = string.format('security find-generic-password -a %s -s %s -w 2>/dev/null',
-sh_dquote(username), sh_dquote(KEYCHAIN_SERVICE))
-local out = run(cmd)
-if not out then return "" end
-return (string.gsub(out, "\r?\n$", ""))
+	if username == "" then return "" end
+	local cmd = string.format('security find-generic-password -a %s -s %s -w 2>/dev/null',
+		sh_dquote(username), sh_dquote(KEYCHAIN_SERVICE))
+	local out = run(cmd)
+	if not out then return "" end
+	return (string.gsub(out, "\r?\n$", ""))
 end
 
 local function win_password_file()
-return vlc.config.userdatadir() .. "/wosir_password.dat"
+	return vlc.config.userdatadir() .. "/wosir_password.dat"
 end
 
 local function win_save_password(password)
-local script_path = vlc.config.userdatadir() .. "/wosir_pwtmp.ps1"
-local script = "$s = ConvertTo-SecureString -String " .. ps_squote(password) .. " -AsPlainText -Force\n"
-.. "$enc = ConvertFrom-SecureString -SecureString $s\n"
-.. "Set-Content -Path " .. ps_squote(win_password_file()) .. " -Value $enc -NoNewline\n"
-local f = io.open(script_path, "w")
-if not f then return end
-f:write(script)
-f:close()
-run(string.format('powershell -NoProfile -ExecutionPolicy Bypass -File "%s"', script_path),
-'powershell -NoProfile -ExecutionPolicy Bypass -File "(save-password script, contents not logged)"')
-os.remove(script_path)
+	local script_path = vlc.config.userdatadir() .. "/wosir_pwtmp.ps1"
+	local script = "$s = ConvertTo-SecureString -String " .. ps_squote(password) .. " -AsPlainText -Force\n"
+		.. "$enc = ConvertFrom-SecureString -SecureString $s\n"
+		.. "Set-Content -Path " .. ps_squote(win_password_file()) .. " -Value $enc -NoNewline\n"
+	local f = io.open(script_path, "w")
+	if not f then return end
+	f:write(script)
+	f:close()
+	run(string.format('powershell -NoProfile -ExecutionPolicy Bypass -File "%s"', script_path),
+		'powershell -NoProfile -ExecutionPolicy Bypass -File "(save-password script, contents not logged)"')
+	os.remove(script_path)
 end
 
 local function win_load_password()
-local existing = io.open(win_password_file(), "r")
-if not existing then return "" end
-existing:close()
+	local existing = io.open(win_password_file(), "r")
+	if not existing then return "" end
+	existing:close()
 
-local script_path = vlc.config.userdatadir() .. "/wosir_pwtmp_read.ps1"
-local script = "$enc = Get-Content -Path " .. ps_squote(win_password_file()) .. " -Raw\n"
-.. "$s = ConvertTo-SecureString -String $enc\n"
-.. "$bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($s)\n"
-.. "[System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)\n"
-local sf = io.open(script_path, "w")
-if not sf then return "" end
-sf:write(script)
-sf:close()
+	local script_path = vlc.config.userdatadir() .. "/wosir_pwtmp_read.ps1"
+	local script = "$enc = Get-Content -Path " .. ps_squote(win_password_file()) .. " -Raw\n"
+		.. "$s = ConvertTo-SecureString -String $enc\n"
+		.. "$bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($s)\n"
+		.. "[System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)\n"
+	local sf = io.open(script_path, "w")
+	if not sf then return "" end
+	sf:write(script)
+	sf:close()
 
-local out = run(string.format('powershell -NoProfile -ExecutionPolicy Bypass -File "%s"', script_path))
-os.remove(script_path)
-if not out then return "" end
-return (string.gsub(out, "\r?\n$", ""))
+	local out = run(string.format('powershell -NoProfile -ExecutionPolicy Bypass -File "%s"', script_path))
+	os.remove(script_path)
+	if not out then return "" end
+	return (string.gsub(out, "\r?\n$", ""))
 end
 
 save_credentials = function(username, password)
-local f = io.open(username_file(), "w")
-if f then
-f:write(username .. "\n")
-f:close()
-end
-if is_windows() then
-win_save_password(password)
-else
-mac_save_password(username, password)
-end
+	local f = io.open(username_file(), "w")
+	if f then
+		f:write(username .. "\n")
+		f:close()
+	end
+	if is_windows() then
+		win_save_password(password)
+	else
+		mac_save_password(username, password)
+	end
 end
 
 load_credentials = function()
-local old = io.open(old_creds_file(), "r")
-if old then
-local old_username = old:read("*l") or ""
-local old_password = old:read("*l") or ""
-old:close()
-vlc.msg.dbg("[WoSir] found the old plain-text credentials file - migrating to secure storage and deleting it")
-save_credentials(old_username, old_password)
-os.remove(old_creds_file())
-return old_username, old_password
-end
+	local f = io.open(username_file(), "r")
+	if not f then return "", "" end
+	local username = f:read("*l") or ""
+	f:close()
+	if username == "" then return "", "" end
 
-local f = io.open(username_file(), "r")
-if not f then return "", "" end
-local username = f:read("*l") or ""
-f:close()
-if username == "" then return "", "" end
-
-local password = is_windows() and win_load_password() or mac_load_password(username)
-return username, password
+	local password = is_windows() and win_load_password() or mac_load_password(username)
+	return username, password
 end
 
 -- fresh login, returns true/false. Always starts from an empty cookie
@@ -648,277 +652,277 @@ end
 -- form (and a fresh token) instead of redirecting away because an old
 -- cookie from a previous run is still "logged in".
 local function login(username, password)
-os.remove(cookie_jar())
+	os.remove(cookie_jar())
 
-local login_page = get("https://www.wosir.cz/prihlaseni")
-if login_page == nil then return false end
+	local login_page = get("https://www.wosir.cz/prihlaseni")
+	if login_page == nil then return false end
 
-local csrf = nil
-for attrs in string.gmatch(login_page, "<input%s+([^>]-)/?>") do
-if extract_attr(attrs, "name") == "csrf_token" then
-csrf = extract_attr(attrs, "value")
-end
-end
-if not csrf then
-vlc.msg.dbg("[WoSir] login: csrf_token not found on login page")
-end
+	local csrf = nil
+	for attrs in string.gmatch(login_page, "<input%s+([^>]-)/?>") do
+		if extract_attr(attrs, "name") == "csrf_token" then
+			csrf = extract_attr(attrs, "value")
+		end
+	end
+	if not csrf then
+		vlc.msg.dbg("[WoSir] login: csrf_token not found on login page")
+	end
 
-local post_data = "prezdivka=" .. urlencode(username)
-.. "&heslo=" .. urlencode(password)
-.. "&csrf_token=" .. urlencode(csrf or "")
-.. "&sub=" .. urlencode("Přihlásit")
-local log_data = "prezdivka=" .. urlencode(username)
-.. "&heslo=***"
-.. "&csrf_token=" .. urlencode(csrf or "")
-.. "&sub=" .. urlencode("Přihlásit")
+	local post_data = "prezdivka=" .. urlencode(username)
+		.. "&heslo=" .. urlencode(password)
+		.. "&csrf_token=" .. urlencode(csrf or "")
+		.. "&sub=" .. urlencode("Přihlásit")
+	local log_data = "prezdivka=" .. urlencode(username)
+		.. "&heslo=***"
+		.. "&csrf_token=" .. urlencode(csrf or "")
+		.. "&sub=" .. urlencode("Přihlásit")
 
-local result = post("https://www.wosir.cz/prihlaseni", post_data, "https://www.wosir.cz/prihlaseni", log_data)
-if result == nil then return false end
+	local result = post("https://www.wosir.cz/prihlaseni", post_data, "https://www.wosir.cz/prihlaseni", log_data)
+	if result == nil then return false end
 
-return string.find(result, "odhlásit", 1, true) ~= nil
-or string.find(result, "logout.php", 1, true) ~= nil
+	return string.find(result, "odhlásit", 1, true) ~= nil
+		or string.find(result, "logout.php", 1, true) ~= nil
 end
 
 local function anime_url(id)
-return "https://www.wosir.cz/anime.php?id=" .. tostring(id)
+	return "https://www.wosir.cz/anime.php?id=" .. tostring(id)
 end
 
 --[[ ---------------- parsing ---------------- ]]
 
 -- returns ordered list of {id=, title=}
 local function parse_search_results(html)
-local out = {}
-for id, title in string.gmatch(html, '<a[^>]-href="[^"]-anime%?id=(%d+)"[^>]*>.-<span[^>]*>([^<]+)</span>') do
-table.insert(out, {id = tonumber(id), title = decode_entities(title)})
-end
-return out
+	local out = {}
+	for id, title in string.gmatch(html, '<a[^>]-href="[^"]-anime%?id=(%d+)"[^>]*>.-<span[^>]*>([^<]+)</span>') do
+		table.insert(out, {id = tonumber(id), title = decode_entities(title)})
+	end
+	return out
 end
 
 -- scans every <input ...> tag inside a chunk of HTML (meant to be called
 -- on a single <form>...</form> block) and returns a name -> value table
 local function parse_inputs(form_html)
-local fields = {}
-for attrs in string.gmatch(form_html, "<input%s+([^>]-)/?>") do
-local name = extract_attr(attrs, "name")
-if name then
-fields[name] = extract_attr(attrs, "value") or ""
-end
-end
-return fields
+	local fields = {}
+	for attrs in string.gmatch(form_html, "<input%s+([^>]-)/?>") do
+		local name = extract_attr(attrs, "name")
+		if name then
+			fields[name] = extract_attr(attrs, "value") or ""
+		end
+	end
+	return fields
 end
 
 -- returns list of row tables, plus debug counters via vlc.msg.dbg
 local function parse_subtitle_rows(html)
-local rows = {}
-local row_count = 0
-local skipped = 0
+	local rows = {}
+	local row_count = 0
+	local skipped = 0
 
-for row_html in string.gmatch(html, '<tr[^>]-class="[^"]-tsubs[^"]-"[^>]*>.-</tr>') do
-row_count = row_count + 1
+	for row_html in string.gmatch(html, '<tr[^>]-class="[^"]-tsubs[^"]-"[^>]*>.-</tr>') do
+		row_count = row_count + 1
 
--- episode number + episode title: content-based (the title td
--- always sits directly after the bare 1-3 digit episode-number
--- td), rather than a fixed column index, which has drifted on these
--- sites before
-local ep, title = string.match(row_html, "<td[^>]*>%s*(%d%d?%d?)%s*</td>%s*<td[^>]*>%s*([^<]-)%s*</td>")
+		-- episode number + episode title: content-based (the title td
+		-- always sits directly after the bare 1-3 digit episode-number
+		-- td), rather than a fixed column index, which has drifted on these
+		-- sites before
+		local ep, title = string.match(row_html, "<td[^>]*>%s*(%d%d?%d?)%s*</td>%s*<td[^>]*>%s*([^<]-)%s*</td>")
 
--- find the real download form: whichever <form> in this row has
--- a file_to_download / file_to_download_BD hidden field. The
--- other button in that same form ("Zkopirovat URL") is a
--- separate JS-only convenience feature, not a real submit - we
--- never touch it, we just POST the 2-3 fields we find here.
-local fields = nil
-local is_bd = false
-for form_html in string.gmatch(row_html, "<form.-</form>") do
-local f = parse_inputs(form_html)
-if f.file_to_download_BD then
-fields, is_bd = f, true
-break
-elseif f.file_to_download then
-fields, is_bd = f, false
-break
-end
-end
+		-- find the real download form: whichever <form> in this row has
+		-- a file_to_download / file_to_download_BD hidden field. The
+		-- other button in that same form ("Zkopirovat URL") is a
+		-- separate JS-only convenience feature, not a real submit - we
+		-- never touch it, we just POST the 2-3 fields we find here.
+		local fields = nil
+		local is_bd = false
+		for form_html in string.gmatch(row_html, "<form.-</form>") do
+			local f = parse_inputs(form_html)
+			if f.file_to_download_BD then
+				fields, is_bd = f, true
+				break
+			elseif f.file_to_download then
+				fields, is_bd = f, false
+				break
+			end
+		end
 
-if not ep or not fields then
-skipped = skipped + 1
-vlc.msg.dbg("[WoSir] skipped row " .. row_count .. " (ep=" .. tostring(ep) .. " has_fields=" .. tostring(fields ~= nil) .. ")")
-else
-table.insert(rows, {
-ep = ep,
-title = decode_entities(title) or "?",
-is_bd = is_bd,
-fields = fields
-})
-vlc.msg.dbg("[WoSir] row " .. row_count .. " OK: ep=" .. ep .. " bd=" .. tostring(is_bd) .. " title=" .. tostring(title))
-end
-end
+		if not ep or not fields then
+			skipped = skipped + 1
+			vlc.msg.dbg("[WoSir] skipped row " .. row_count .. " (ep=" .. tostring(ep) .. " has_fields=" .. tostring(fields ~= nil) .. ")")
+		else
+			table.insert(rows, {
+					ep = ep,
+					title = decode_entities(title) or "?",
+					is_bd = is_bd,
+					fields = fields
+				})
+			vlc.msg.dbg("[WoSir] row " .. row_count .. " OK: ep=" .. ep .. " bd=" .. tostring(is_bd) .. " title=" .. tostring(title))
+		end
+	end
 
-vlc.msg.dbg("[WoSir] parsed " .. row_count .. " <tr> rows, " .. #rows .. " usable, " .. skipped .. " skipped")
-return rows
+	vlc.msg.dbg("[WoSir] parsed " .. row_count .. " <tr> rows, " .. #rows .. " usable, " .. skipped .. " skipped")
+	return rows
 end
 
 --[[ ---------------- actions ---------------- ]]
 
 function do_search()
-local username = user_input:get_text()
-local password = pass_input:get_text()
-local query = search_input:get_text()
+	local username = user_input:get_text()
+	local password = pass_input:get_text()
+	local query = search_input:get_text()
 
-if username == "" or password == "" then
-status_label:set_text("Enter your wosir.cz username and password first.")
-return
-end
-if query == "" then
-status_label:set_text("Type a show title to search for.")
-return
-end
+	if username == "" or password == "" then
+		status_label:set_text("Enter your wosir.cz username and password first.")
+		return
+	end
+	if query == "" then
+		status_label:set_text("Type a show title to search for.")
+		return
+	end
 
-save_credentials(username, password)
+	save_credentials(username, password)
 
-status_label:set_text("Logging in...")
-dlg:update()
-if not login(username, password) then
-status_label:set_text("Login failed (see debug log) - check username/password.")
-return
-end
+	status_label:set_text("Logging in...")
+	dlg:update()
+	if not login(username, password) then
+		status_label:set_text("Login failed (see debug log) - check username/password.")
+		return
+	end
 
-status_label:set_text("Searching...")
-dlg:update()
-local html = get("https://www.wosir.cz/preklady?search=" .. urlencode(query) .. "&search_sub=Hledat")
-if html == nil then
-status_label:set_text("Search request failed to run (see debug log).")
-return
-end
+	status_label:set_text("Searching...")
+	dlg:update()
+	local html = get("https://www.wosir.cz/preklady?search=" .. urlencode(query) .. "&search_sub=Hledat")
+	if html == nil then
+		status_label:set_text("Search request failed to run (see debug log).")
+		return
+	end
 
-local matches = parse_search_results(html)
-vlc.msg.dbg("[WoSir] search '" .. query .. "' -> " .. #matches .. " matches")
+	local matches = parse_search_results(html)
+	vlc.msg.dbg("[WoSir] search '" .. query .. "' -> " .. #matches .. " matches")
 
-results_list:clear()
-for _, m in ipairs(matches) do
-results_list:add_value(m.title, m.id)
-end
-current_stage = "search"
+	results_list:clear()
+	for _, m in ipairs(matches) do
+		results_list:add_value(m.title, m.id)
+	end
+	current_stage = "search"
 
-if #matches == 0 then
-status_label:set_text("No results for '" .. query .. "'.")
-else
-status_label:set_text(#matches .. " result(s). Select one, then click 'View Subtitles'.")
-end
+	if #matches == 0 then
+		status_label:set_text("No results for '" .. query .. "'.")
+	else
+		status_label:set_text(#matches .. " result(s). Select one, then click 'View Subtitles'.")
+	end
 end
 
 function do_view_subs()
-if current_stage ~= "search" then
-status_label:set_text("Do a search first, then select a show from the list.")
-return
-end
-local sel = results_list:get_selection()
-local anime_id = nil
-for id, text in pairs(sel) do
-anime_id = id
-current_anime_title = text
-break
-end
-if anime_id == nil then
-status_label:set_text("Select a show from the list first.")
-return
-end
-current_anime_id = anime_id
+	if current_stage ~= "search" then
+		status_label:set_text("Do a search first, then select a show from the list.")
+		return
+	end
+	local sel = results_list:get_selection()
+	local anime_id = nil
+	for id, text in pairs(sel) do
+		anime_id = id
+		current_anime_title = text
+		break
+	end
+	if anime_id == nil then
+		status_label:set_text("Select a show from the list first.")
+		return
+	end
+	current_anime_id = anime_id
 
-status_label:set_text("Loading subtitle list...")
-dlg:update()
+	status_label:set_text("Loading subtitle list...")
+	dlg:update()
 
-local username = user_input:get_text()
-local password = pass_input:get_text()
-login(username, password)
+	local username = user_input:get_text()
+	local password = pass_input:get_text()
+	login(username, password)
 
-local html = get(anime_url(anime_id))
-if html == nil then
-status_label:set_text("Request failed to run (see debug log).")
-return
-end
+	local html = get(anime_url(anime_id))
+	if html == nil then
+		status_label:set_text("Request failed to run (see debug log).")
+		return
+	end
 
-sub_rows = parse_subtitle_rows(html)
+	sub_rows = parse_subtitle_rows(html)
 
-results_list:clear()
-for i, row in ipairs(sub_rows) do
-local suffix = row.is_bd and " (BD)" or ""
-local label = "Ep " .. row.ep .. suffix .. " - " .. row.title
-results_list:add_value(label, i)
-end
-current_stage = "subs"
+	results_list:clear()
+	for i, row in ipairs(sub_rows) do
+		local suffix = row.is_bd and " (BD)" or ""
+		local label = "Ep " .. row.ep .. suffix .. " - " .. row.title
+		results_list:add_value(label, i)
+	end
+	current_stage = "subs"
 
-if #sub_rows == 0 then
-status_label:set_text("No subtitle rows found/parsed for '" .. current_anime_title .. "' (see debug log).")
-else
-status_label:set_text(#sub_rows .. " subtitle(s) for '" .. current_anime_title .. "'. Select one, then Download.")
-end
+	if #sub_rows == 0 then
+		status_label:set_text("No subtitle rows found/parsed for '" .. current_anime_title .. "' (see debug log).")
+	else
+		status_label:set_text(#sub_rows .. " subtitle(s) for '" .. current_anime_title .. "'. Select one, then Download.")
+	end
 end
 
 function do_download()
-if current_stage ~= "subs" then
-status_label:set_text("View a show's subtitles first, then select one to download.")
-return
-end
-local sel = results_list:get_selection()
-local idx = nil
-for id, _ in pairs(sel) do idx = id break end
-if idx == nil or sub_rows[idx] == nil then
-status_label:set_text("Select a subtitle from the list first.")
-return
-end
-local row = sub_rows[idx]
+	if current_stage ~= "subs" then
+		status_label:set_text("View a show's subtitles first, then select one to download.")
+		return
+	end
+	local sel = results_list:get_selection()
+	local idx = nil
+	for id, _ in pairs(sel) do idx = id break end
+	if idx == nil or sub_rows[idx] == nil then
+		status_label:set_text("Select a subtitle from the list first.")
+		return
+	end
+	local row = sub_rows[idx]
 
-status_label:set_text("Downloading...")
-dlg:update()
+	status_label:set_text("Downloading...")
+	dlg:update()
 
-local username = user_input:get_text()
-local password = pass_input:get_text()
-if not login(username, password) then
-status_label:set_text("Login failed - can't download (see debug log).")
-return
-end
+	local username = user_input:get_text()
+	local password = pass_input:get_text()
+	if not login(username, password) then
+		status_label:set_text("Login failed - can't download (see debug log).")
+		return
+	end
 
-local url = anime_url(current_anime_id)
+	local url = anime_url(current_anime_id)
 
--- POST exactly the fields the real form on the page would submit
--- (file_to_download[_BD], dwl[_bd], hiddenid) - this is NOT the
--- "Zkopirovat URL" GET link, which is a different code path
-local parts = {}
-for name, value in pairs(row.fields) do
-table.insert(parts, name .. "=" .. urlencode(decode_entities(value)))
-end
-local post_data = table.concat(parts, "&")
+	-- POST exactly the fields the real form on the page would submit
+	-- (file_to_download[_BD], dwl[_bd], hiddenid) - this is NOT the
+	-- "Zkopirovat URL" GET link, which is a different code path
+	local parts = {}
+	for name, value in pairs(row.fields) do
+		table.insert(parts, name .. "=" .. urlencode(decode_entities(value)))
+	end
+	local post_data = table.concat(parts, "&")
 
-local body_file = vlc.config.userdatadir() .. "/wosir_last_sub.tmp"
-local cmd = string.format(
-'curl -sS -L -b "%s" -c "%s" -e "%s" -d "%s" -o "%s" "%s"',
-cookie_jar(), cookie_jar(), url, post_data, body_file, url
-)
-local out, err = run(cmd)
-if out == nil then
-status_label:set_text("curl did not run: " .. tostring(err))
-return
-end
+	local body_file = vlc.config.userdatadir() .. "/wosir_last_sub.tmp"
+	local cmd = string.format(
+		'curl -sS -L %s -b "%s" -c "%s" -e "%s" -d "%s" -o "%s" "%s"',
+		HF_CURL_DOWNLOAD, cookie_jar(), cookie_jar(), url, post_data, body_file, url
+	)
+	local out, err = run(cmd)
+	if out == nil then
+		status_label:set_text("curl did not run: " .. tostring(err))
+		return
+	end
 
-local bf = io.open(body_file, "r")
-local body_sample = bf and bf:read(200) or ""
-if bf then bf:close() end
+	local bf = io.open(body_file, "r")
+	local body_sample = bf and bf:read(200) or ""
+	if bf then bf:close() end
 
-if body_sample == nil or body_sample == "" then
-status_label:set_text("Download failed - empty response (see debug log). Try again in a moment.")
-vlc.msg.dbg("[WoSir] download got empty body for ep " .. row.ep)
-return
-end
-if string.match(body_sample, "^%s*<") then
-status_label:set_text("Download failed - site returned a page instead of a subtitle (see debug log).")
-vlc.msg.dbg("[WoSir] download body looked like HTML for ep " .. row.ep .. ": " .. string.sub(body_sample, 1, 80))
-return
-end
+	if body_sample == nil or body_sample == "" then
+		status_label:set_text("Download failed - empty response (see debug log). Try again in a moment.")
+		vlc.msg.dbg("[WoSir] download got empty body for ep " .. row.ep)
+		return
+	end
+	if string.match(body_sample, "^%s*<") then
+		status_label:set_text("Download failed - site returned a page instead of a subtitle (see debug log).")
+		vlc.msg.dbg("[WoSir] download body looked like HTML for ep " .. row.ep .. ": " .. string.sub(body_sample, 1, 80))
+		return
+	end
 
-local suffix = row.is_bd and "_BD" or ""
-status_label:set_text(hf_finish({
-tag = "[WoSir]", prefix = "wosir", body_path = body_file, ext = "ass",
-name_stem = "wosir_ep" .. row.ep .. suffix,
-}))
+	local suffix = row.is_bd and "_BD" or ""
+	status_label:set_text(hf_finish({
+				tag = "[WoSir]", prefix = "wosir", body_path = body_file, ext = "ass",
+				name_stem = "wosir_ep" .. row.ep .. suffix,
+			}))
 end

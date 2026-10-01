@@ -82,6 +82,7 @@ local current_project = nil
 
 local set_status -- assigned in the dialog section, used by the API code
 
+-- >>> shared block "platform" - edit dev/shared/platform.lua in VLC-Subtitles, then run dev/sync.py
 --[[ ---------------- platform helpers ---------------- ]]
 
 -- VLC doesn't provide the standard "package" table while it scans
@@ -222,6 +223,7 @@ local function cleanup_old_subtitles()
 	end
 	if removed > 0 then log("cleanup: removed " .. removed .. " old subtitle file(s)") end
 end
+-- <<< shared block "platform"
 
 --[[ ---------------- text helpers ---------------- ]]
 
@@ -739,6 +741,7 @@ local function pick_episode_file(paths, ep)
 	return nil
 end
 
+-- >>> shared block "zip_checks" - edit dev/shared/zip_checks.lua in VLC-Subtitles, then run dev/sync.py
 --[[ ---------------- download checks ---------------- ]]
 
 local function u16(s, i)
@@ -814,6 +817,7 @@ local function attach_subtitle(path)
 	end
 	return false
 end
+-- <<< shared block "zip_checks"
 
 --[[ ---------------- dialog ---------------- ]]
 

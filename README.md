@@ -8,14 +8,14 @@ Compatible with VLC 3.x on Windows 10/11 and macOS (tested on VLC 3.0.23).
 
 | Extension | Site | Content | Version | Needs | Support |
 |---|---|---|---|---|---|
-| Edna Subtitles | [edna.cz](https://www.edna.cz) | Czech/Slovak TV shows | 1.1.1 | Account | Unofficial |
+| Edna Subtitles | [edna.cz](https://www.edna.cz) | Czech/Slovak TV shows | 1.1.2 | Account | Unofficial |
 | Hanabi Subtitles | [hanabi.fan](https://hanabi.fan) | Czech anime | 1.0.1 | Access token (free account) | **Official API** |
-| Hiyori Subtitles | [hiyori.cz](https://hiyori.cz) | Czech/Slovak anime | 1.1.1 | Account | Unofficial |
-| Kamui-Subs Subtitles | [kamui-subs.cz](https://kamui-subs.cz) | Czech anime | 1.1.1 | Account + ZIP password | Unofficial |
+| Hiyori Subtitles | [hiyori.cz](https://hiyori.cz) | Czech/Slovak anime | 1.1.2 | Account | Unofficial |
+| Kamui-Subs Subtitles | [kamui-subs.cz](https://kamui-subs.cz) | Czech anime | 1.1.2 | Account + ZIP password | Unofficial |
 | Legie Kondor Subtitles | [anime4.legiekondor.cz](https://anime4.legiekondor.cz) | Czech anime | 1.0.1 | Nothing | Unofficial |
 | NyaSub Subtitles | [nyasub.cz](https://nyasub.cz) | Czech anime | 1.0.1 | Nothing | Unofficial |
-| Titulky.com Subtitles | [titulky.com](https://premium.titulky.com) | Czech/Slovak movies and TV | 1.1.1 | Premium account | Unofficial |
-| WoSir Subtitles | [wosir.cz](https://www.wosir.cz) | Czech anime | 1.1.1 | Account | Unofficial |
+| Titulky.com Subtitles | [titulky.com](https://premium.titulky.com) | Czech/Slovak movies and TV | 1.1.2 | Premium account | Unofficial |
+| WoSir Subtitles | [wosir.cz](https://www.wosir.cz) | Czech anime | 1.1.2 | Account | Unofficial |
 
 **Support:**
 - **Official API**: the site publishes and supports an API for exactly this purpose. Documented and stable.
@@ -52,6 +52,7 @@ Subtitles are saved to `Documents/VLC Subtitles` and cleaned up automatically af
 ## Repository layout
 - `extensions/<name>.lua` — the extensions themselves
 - `install.ps1` / `install.sh` — the Windows and macOS installers
+- `dev/` — maintenance tools (shared code kept in one place), not needed to use the extensions
 
 ## Kodi
 The same sites (except titulky.com) are available as Kodi subtitle addons, from the [Highflight Subtitles Repository](https://github.com/KiritoSenpaiCZ/KiritoSenpaiCZ.github.io).

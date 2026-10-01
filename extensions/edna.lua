@@ -22,8 +22,8 @@ Site notes:
 
 function descriptor()
 	return {
-		title = "Edna Subtitles v1.1.1",
-		version = "1.1.1",
+		title = "Edna Subtitles v1.1.2",
+		version = "1.1.2",
 		author = "Highflight Studio",
 		shortdesc = "Edna subtitles",
 		description = "Search edna.cz and download/apply subtitles.",
@@ -52,7 +52,8 @@ local current_season = nil
 -- they need
 local save_credentials, load_credentials
 
---[[ ---------------- download handling ----------------
+-- >>> shared block "hf_download" - edit dev/shared/hf_download.lua in VLC-Subtitles, then run dev/sync.py
+--[[ ---------------- download handling and curl helpers ----------------
 Everything here is prefixed hf_ so it can't clash with the rest of the
 file. Only local function definitions: VLC's startup scan provides almost
 no standard Lua functions, so nothing may be called at a file's top level.
@@ -69,12 +70,19 @@ What it does once a file has been downloaded (hf_finish):
   - removes the temporary files every time
 hf_cleanup_old deletes this extension's own files in that folder once
 they are older than HF_SUB_MAX_AGE_DAYS (the save time is in the name).
+
+HF_CURL_PAGE / HF_CURL_DOWNLOAD are time limits for every curl call, so a
+site that stops answering can't freeze VLC for good. hf_post_file hands
+POST data to curl through a temporary file, so passwords never appear on
+a command line (where other programs could read them).
 ]]
 
 local HF_MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
 local HF_MAX_EXTRACTED_BYTES = 200 * 1024 * 1024
 local HF_SUB_MAX_AGE_DAYS = 30
 local HF_SUB_EXTS = { srt = true, ass = true, ssa = true, sub = true, vtt = true }
+local HF_CURL_PAGE = "--connect-timeout 10 --max-time 20"
+local HF_CURL_DOWNLOAD = "--connect-timeout 10 --max-time 60"
 
 local hf_windows = nil
 local function hf_is_windows()
@@ -119,6 +127,14 @@ local function hf_write(path, data)
 	f:write(data)
 	f:close()
 	return true
+end
+
+-- Writes POST data to a temporary file. Returns the curl option that sends
+-- it, and the file to delete once curl has run.
+local function hf_post_file(prefix, data)
+	local path = hf_join(vlc.config.userdatadir(), prefix .. "_post.tmp")
+	hf_write(path, data)
+	return '--data-binary "@' .. path .. '"', path
 end
 
 local function hf_make_dir(tag, path)
@@ -334,8 +350,8 @@ local function hf_finish(o)
 		src = hf_extract(tag, zip_path, hf_join(work, "extract"), o.zip_password, encrypted)
 		if not src then
 			return done(encrypted
-				and "Couldn't unpack the zip - check the zip password (see debug log)."
-				or "Downloaded a zip but found no subtitle inside (see debug log).")
+					and "Couldn't unpack the zip - check the zip password (see debug log)."
+					or "Downloaded a zip but found no subtitle inside (see debug log).")
 		end
 		ext = string.lower(string.match(src, "%.(%w+)$") or "srt")
 	else
@@ -360,6 +376,7 @@ local function hf_finish(o)
 	end
 	return done("Saved to " .. final_path .. " (no video playing, open one and add it manually).")
 end
+-- <<< shared block "hf_download"
 
 local warm_up -- assigned further down, after the login helpers it uses
 
@@ -424,7 +441,7 @@ local function guess_title_from_playing()
 end
 
 function show_dialog()
-	dlg = vlc.dialog("Edna Subtitles v1.1.1")
+	dlg = vlc.dialog("Edna Subtitles v1.1.2")
 	local saved_username, saved_password = load_credentials()
 	local guessed_title = guess_title_from_playing()
 
@@ -573,17 +590,19 @@ local POST_EXTRA_HEADERS = ' -H "Origin: https://www.edna.cz"'
 
 local function get(url, referer)
 	local ref = referer and string.format(' -e "%s"', referer) or ""
-	local cmd = string.format('curl -sS -L -A "%s" -b "%s" -c "%s"%s "%s"', USER_AGENT, cookie_jar(), cookie_jar(), ref, url)
+	local cmd = string.format('curl -sS -L %s -A "%s" -b "%s" -c "%s"%s "%s"', HF_CURL_PAGE, USER_AGENT, cookie_jar(), cookie_jar(), ref, url)
 	return run(cmd)
 end
 
 local function post(url, data, referer, log_data)
 	local ref = referer and string.format(' -e "%s"', referer) or ""
-	local cmd = string.format('curl -sS -L -A "%s"%s -b "%s" -c "%s"%s -d "%s" "%s"',
-		USER_AGENT, POST_EXTRA_HEADERS, cookie_jar(), cookie_jar(), ref, data, url)
-	local log_cmd = log_data and string.format('curl -sS -L -A "%s"%s -b "%s" -c "%s"%s -d "%s" "%s"',
-		USER_AGENT, POST_EXTRA_HEADERS, cookie_jar(), cookie_jar(), ref, log_data, url) or nil
-	return run(cmd, log_cmd)
+	local data_opt, data_file = hf_post_file("edna", data)
+	local cmd = string.format('curl -sS -L %s -A "%s"%s -b "%s" -c "%s"%s %s "%s"',
+		HF_CURL_PAGE, USER_AGENT, POST_EXTRA_HEADERS, cookie_jar(), cookie_jar(), ref, data_opt, url)
+	local log_cmd = log_data and (cmd .. " (data: " .. log_data .. ")") or nil
+	local out, err = run(cmd, log_cmd)
+	os.remove(data_file)
+	return out, err
 end
 
 local function extract_attr(attr_str, name)
@@ -1241,8 +1260,8 @@ function do_download()
 	local body_file = userdir .. "/edna_last_sub.tmp"
 
 	local cmd = string.format(
-		'curl -sS -L -A "%s" -b "%s" -c "%s" -e "%s" -D "%s" -o "%s" "%s"',
-		USER_AGENT, cookie_jar(), cookie_jar(), direct_url, header_file, body_file, direct_url
+		'curl -sS -L %s -A "%s" -b "%s" -c "%s" -e "%s" -D "%s" -o "%s" "%s"',
+		HF_CURL_DOWNLOAD, USER_AGENT, cookie_jar(), cookie_jar(), direct_url, header_file, body_file, direct_url
 	)
 	local out, err = run(cmd)
 	if out == nil then
