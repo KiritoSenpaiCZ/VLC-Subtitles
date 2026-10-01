@@ -22,8 +22,8 @@ Site notes:
 
 function descriptor()
 	return {
-		title = "Edna Subtitles v1.1.2",
-		version = "1.1.2",
+		title = "Edna Subtitles v1.1.3",
+		version = "1.1.3",
 		author = "Highflight Studio",
 		shortdesc = "Edna subtitles",
 		description = "Search edna.cz and download/apply subtitles.",
@@ -119,6 +119,22 @@ local function hf_run(tag, cmd, log_line)
 	local out = p:read("*a")
 	p:close()
 	return out
+end
+
+-- On Windows every command-line tool started from VLC (curl, tar,
+-- PowerShell) opens its own black window for a moment, because VLC has no
+-- console. Giving VLC one console of its own and hiding it right away
+-- makes later tools run inside it instead: at most one short flash when
+-- the extension opens, none after that. Calling this again (or from
+-- another extension) is harmless: the console already exists.
+local function hf_quiet_console(tag)
+	if not hf_is_windows() or not (vlc.win and vlc.win.console_init) then return end
+	local ok, err = pcall(vlc.win.console_init)
+	if not ok then
+		hf_log(tag, "couldn't create the hidden console: " .. tostring(err))
+		return
+	end
+	hf_run(tag, "powershell -NoProfile -WindowStyle Hidden -Command exit")
 end
 
 local function hf_read(path)
@@ -437,6 +453,7 @@ end
 local warm_up -- assigned further down, after the login helpers it uses
 
 function activate()
+	pcall(hf_quiet_console, "[Edna]")
 	pcall(hf_cleanup_old, "[Edna]", "edna")
 	show_dialog()
 	local ok, err = pcall(warm_up)
@@ -497,7 +514,7 @@ local function guess_title_from_playing()
 end
 
 function show_dialog()
-	dlg = vlc.dialog("Edna Subtitles v1.1.2")
+	dlg = vlc.dialog("Edna Subtitles v1.1.3")
 	local saved_username, saved_password = load_credentials()
 	local guessed_title = guess_title_from_playing()
 

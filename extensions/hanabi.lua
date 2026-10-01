@@ -43,7 +43,7 @@ Debug: enable VLC's debug log (Tools -> Messages, verbosity 2) and look for
 lines starting with "[Hanabi]". The token is never logged.
 ]]
 
-local VERSION = "1.0.1"
+local VERSION = "1.0.2"
 local TAG = "[Hanabi]"
 local PREFIX = "hanabi" -- file-name prefix for everything this extension creates
 local API_BASE = "https://hanabi.fan/wp-json/hanabi/v1"
@@ -118,6 +118,22 @@ local function run(cmd, log_line)
 	local out = p:read("*a")
 	p:close()
 	return out
+end
+
+-- On Windows every command-line tool started from VLC (curl, tar,
+-- PowerShell) opens its own black window for a moment, because VLC has no
+-- console. Giving VLC one console of its own and hiding it right away
+-- makes later tools run inside it instead: at most one short flash when
+-- the extension opens, none after that. Calling this again (or from
+-- another extension) is harmless: the console already exists.
+local function quiet_console()
+	if not is_windows() or not (vlc.win and vlc.win.console_init) then return end
+	local ok, err = pcall(vlc.win.console_init)
+	if not ok then
+		log("couldn't create the hidden console: " .. tostring(err))
+		return
+	end
+	run("powershell -NoProfile -WindowStyle Hidden -Command exit")
 end
 
 local function read_file(path)
@@ -822,6 +838,7 @@ end
 --[[ ---------------- dialog ---------------- ]]
 
 function activate()
+	pcall(quiet_console)
 	pcall(cleanup_old_subtitles)
 	show_dialog()
 end

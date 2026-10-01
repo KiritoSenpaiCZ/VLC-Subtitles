@@ -15,8 +15,8 @@ block); login() itself always starts from an empty cookie jar.
 
 function descriptor()
 	return {
-		title = "Titulky.com Subtitles v1.2.0",
-		version = "1.2.0",
+		title = "Titulky.com Subtitles v1.2.1",
+		version = "1.2.1",
 		author = "Highflight Studio",
 		shortdesc = "Titulky.com subtitles (premium)",
 		description = "Search premium.titulky.com and download/apply subtitles.",
@@ -106,6 +106,22 @@ local function hf_run(tag, cmd, log_line)
 	local out = p:read("*a")
 	p:close()
 	return out
+end
+
+-- On Windows every command-line tool started from VLC (curl, tar,
+-- PowerShell) opens its own black window for a moment, because VLC has no
+-- console. Giving VLC one console of its own and hiding it right away
+-- makes later tools run inside it instead: at most one short flash when
+-- the extension opens, none after that. Calling this again (or from
+-- another extension) is harmless: the console already exists.
+local function hf_quiet_console(tag)
+	if not hf_is_windows() or not (vlc.win and vlc.win.console_init) then return end
+	local ok, err = pcall(vlc.win.console_init)
+	if not ok then
+		hf_log(tag, "couldn't create the hidden console: " .. tostring(err))
+		return
+	end
+	hf_run(tag, "powershell -NoProfile -WindowStyle Hidden -Command exit")
 end
 
 local function hf_read(path)
@@ -422,6 +438,7 @@ end
 -- <<< shared block "hf_download"
 
 function activate()
+	pcall(hf_quiet_console, "[Titulky]")
 	pcall(hf_cleanup_old, "[Titulky]", "titulky")
 	show_dialog()
 end
@@ -490,7 +507,7 @@ end
 -- VERSION_TAG: shown in the dialog's title bar. Keep it in step with
 -- descriptor().version; if the title bar shows an old version, VLC is
 -- still running an old copy of this file.
-local VERSION_TAG = "v1.2.0"
+local VERSION_TAG = "v1.2.1"
 
 function show_dialog()
 	dlg = vlc.dialog("Titulky.com Subtitles (" .. VERSION_TAG .. ")")
