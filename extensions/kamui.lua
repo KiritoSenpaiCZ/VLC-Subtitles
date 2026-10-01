@@ -34,8 +34,8 @@ block); login() itself always starts from an empty cookie jar.
 
 function descriptor()
 	return {
-		title = "Kamui Subtitles v1.2.1",
-		version = "1.2.1",
+		title = "Kamui Subtitles v1.3.0",
+		version = "1.3.0",
 		author = "Highflight Studio",
 		shortdesc = "Kamui-Subs subtitles",
 		description = "Search kamui-subs.cz and download/apply subtitles.",
@@ -134,14 +134,41 @@ end
 -- makes later tools run inside it instead: at most one short flash when
 -- the extension opens, none after that. Calling this again (or from
 -- another extension) is harmless: the console already exists.
-local function hf_quiet_console(tag)
-	if not hf_is_windows() or not (vlc.win and vlc.win.console_init) then return end
-	local ok, err = pcall(vlc.win.console_init)
-	if not ok then
-		hf_log(tag, "couldn't create the hidden console: " .. tostring(err))
-		return
+-- The same PowerShell call also reports the Windows display language.
+--
+-- The UI is in Czech when the system language is Czech or Slovak, and in
+-- English otherwise. hf_start runs both when the extension opens.
+local hf_lang = "en"
+
+-- L("english", "czech", ...): the text for the UI language, with %s
+-- placeholders filled in like string.format
+local function L(en, cs, ...)
+	return string.format((hf_lang == "cs") and cs or en, ...)
+end
+
+local function hf_language_of(code)
+	code = string.lower(code or "")
+	if string.match(code, "^%s*cs") or string.match(code, "^%s*sk") then return "cs" end
+	return "en"
+end
+
+local function hf_start(tag)
+	local env = os.getenv("LC_ALL") or os.getenv("LC_MESSAGES") or os.getenv("LANG")
+	if hf_is_windows() then
+		if vlc.win and vlc.win.console_init then
+			local ok, err = pcall(vlc.win.console_init)
+			if not ok then hf_log(tag, "couldn't create the hidden console: " .. tostring(err)) end
+		end
+		local culture = hf_run(tag, 'powershell -NoProfile -WindowStyle Hidden -Command "(Get-UICulture).Name"')
+		hf_lang = hf_language_of(culture)
+	elseif env and env ~= "" and env ~= "C" and env ~= "POSIX" and not string.match(env, "^C%.") then
+		hf_lang = hf_language_of(env)
+	else
+		-- macOS apps started from the Dock or Finder get no LANG
+		local langs = hf_run(tag, "defaults read -g AppleLanguages 2>/dev/null") or ""
+		hf_lang = hf_language_of(string.match(langs, '"?([%a%-_]+)'))
 	end
-	hf_run(tag, "powershell -NoProfile -WindowStyle Hidden -Command exit")
+	hf_log(tag, "UI language: " .. hf_lang)
 end
 
 local function hf_read(path)
@@ -308,10 +335,10 @@ local function hf_inspect_zip(data)
 end
 
 local function hf_check_download(data)
-	if not data or #data == 0 then return false, "empty response" end
-	if #data > HF_MAX_DOWNLOAD_BYTES then return false, "larger than a subtitle should be" end
+	if not data or #data == 0 then return false, L("empty response", "prázdná odpověď") end
+	if #data > HF_MAX_DOWNLOAD_BYTES then return false, L("larger than a subtitle should be", "soubor je na titulky příliš velký") end
 	local head = string.gsub(string.sub(data, 1, 512), "^\239\187\191", "")
-	if string.match(head, "^%s*<") then return false, "the site returned a web page instead of a subtitle" end
+	if string.match(head, "^%s*<") then return false, L("the site returned a web page instead of a subtitle", "stránka místo titulků vrátila webovou stránku") end
 	return true
 end
 
@@ -396,7 +423,7 @@ local function hf_finish(o)
 	if not ok then
 		hf_log(tag, "download rejected: " .. reason)
 		os.remove(o.body_path)
-		return "Download failed: " .. reason .. ". Try again in a moment."
+		return L("Download failed: %s. Try again in a moment.", "Stažení selhalo: %s. Zkuste to za chvíli znovu.", reason)
 	end
 
 	local work = hf_join(vlc.config.userdatadir(), o.prefix .. "_work")
@@ -414,23 +441,23 @@ local function hf_finish(o)
 		local total, info, encrypted = hf_inspect_zip(data)
 		if not total then
 			hf_log(tag, "zip refused: " .. tostring(info))
-			return done("Downloaded a zip but it looks broken or unsafe (see debug log).")
+			return done(L("Downloaded a zip but it looks broken or unsafe (see debug log).", "ZIP se stáhl, ale vypadá poškozeně nebo nebezpečně (podrobnosti v logu)."))
 		end
 		if total > HF_MAX_EXTRACTED_BYTES then
 			hf_log(tag, "zip refused: " .. total .. " bytes uncompressed")
-			return done("Download refused: the archive is far too large when unpacked.")
+			return done(L("Download refused: the archive is far too large when unpacked.", "Stažení odmítnuto: archiv by byl po rozbalení příliš velký."))
 		end
 		if encrypted and (not o.zip_password or o.zip_password == "") then
 			hf_log(tag, "zip is password-protected and no zip password is set")
-			return done("This zip needs a password - fill in the zip password field, then download again.")
+			return done(L("This zip needs a password - fill in the zip password field, then download again.", "Tento ZIP potřebuje heslo - vyplňte heslo k ZIPu a stáhněte znovu."))
 		end
 		local zip_path = hf_join(work, "download.zip")
 		hf_write(zip_path, data)
 		src = hf_extract(tag, zip_path, hf_join(work, "extract"), o.zip_password, encrypted)
 		if not src then
 			return done(encrypted
-					and "Couldn't unpack the zip - check the zip password (see debug log)."
-					or "Downloaded a zip but found no subtitle inside (see debug log).")
+					and L("Couldn't unpack the zip - check the zip password (see debug log).", "ZIP se nepodařilo rozbalit - zkontrolujte heslo k ZIPu (podrobnosti v logu).")
+					or L("Downloaded a zip but found no subtitle inside (see debug log).", "ZIP se stáhl, ale nejsou v něm žádné titulky (podrobnosti v logu)."))
 		end
 		ext = string.lower(string.match(src, "%.(%w+)$") or "srt")
 	else
@@ -446,19 +473,19 @@ local function hf_finish(o)
 	local content = hf_read(src)
 	if not content or not hf_write(final_path, content) then
 		hf_log(tag, "could not write " .. final_path)
-		return done("Downloaded, but couldn't save into " .. dest_dir .. " (see debug log).")
+		return done(L("Downloaded, but couldn't save into %s (see debug log).", "Staženo, ale nepodařilo se uložit do %s (podrobnosti v logu).", dest_dir))
 	end
 	hf_log(tag, "saved subtitle to " .. final_path)
 
 	if hf_attach(final_path) then
-		return done("Downloaded and applied: " .. final_name)
+		return done(L("Downloaded and applied: %s", "Staženo a načteno: %s", final_name))
 	end
-	return done("Saved to " .. final_path .. " (no video playing, open one and add it manually).")
+	return done(L("Saved to %s (no video playing, open one and add it manually).", "Uloženo do %s (nehraje žádné video, otevřete ho a titulky přidejte ručně).", final_path))
 end
 -- <<< shared block "hf_download"
 
 function activate()
-	pcall(hf_quiet_console, "[Kamui]")
+	pcall(hf_start, "[Kamui]")
 	pcall(hf_cleanup_old, "[Kamui]", "kamui")
 	show_dialog()
 end
@@ -517,29 +544,29 @@ local function guess_title_from_playing()
 end
 
 function show_dialog()
-	dlg = vlc.dialog("Kamui Subtitles v1.2.1")
+	dlg = vlc.dialog("Kamui Subtitles v1.3.0")
 	local saved_username, saved_password = load_credentials()
 	hf_remember_credentials(nil, saved_username, saved_password)
 	local saved_zippw = load_zip_password()
 	local guessed_title = guess_title_from_playing()
 
-	dlg:add_label("Username:", 1, 1, 1, 1)
+	dlg:add_label(L("Username:", "Uživatelské jméno:"), 1, 1, 1, 1)
 	user_input = dlg:add_text_input(saved_username, 2, 1, 2, 1)
-	dlg:add_label("Password:", 1, 2, 1, 1)
+	dlg:add_label(L("Password:", "Heslo:"), 1, 2, 1, 1)
 	pass_input = dlg:add_password(saved_password, 2, 2, 2, 1)
-	dlg:add_label("Zip password:", 1, 3, 1, 1)
+	dlg:add_label(L("Zip password:", "Heslo k ZIPu:"), 1, 3, 1, 1)
 	zippw_input = dlg:add_password(saved_zippw, 2, 3, 2, 1)
 
-	dlg:add_label("Search:", 1, 4, 1, 1)
+	dlg:add_label(L("Search:", "Hledat:"), 1, 4, 1, 1)
 	search_input = dlg:add_text_input(guessed_title or "", 2, 4, 2, 1)
-	dlg:add_button("Search", do_search, 1, 5, 1, 1)
-	dlg:add_button("View Episodes", do_view_episodes, 2, 5, 1, 1)
-	dlg:add_button("Download Selected", do_download, 3, 5, 1, 1)
+	dlg:add_button(L("Search", "Hledat"), do_search, 1, 5, 1, 1)
+	dlg:add_button(L("View Episodes", "Zobrazit epizody"), do_view_episodes, 2, 5, 1, 1)
+	dlg:add_button(L("Download Selected", "Stáhnout vybrané"), do_download, 3, 5, 1, 1)
 
 	results_list = dlg:add_list(1, 6, 3, 1)
 	local initial_status = guessed_title
-		and ("Guessed '" .. guessed_title .. "' from the playing file - edit if wrong, then Search.")
-		or "Enter your login, the zip password and a show title, then Search."
+		and L("Guessed '%s' from the playing file - edit if wrong, then Search.", "Odhadnutý název „%s“ podle přehrávaného souboru - případně ho upravte a klikněte na Hledat.", guessed_title)
+		or L("Enter your login, the zip password and a show title, then Search.", "Zadejte přihlašovací údaje, heslo k ZIPu a název anime, pak klikněte na Hledat.")
 	status_label = dlg:add_label(initial_status, 1, 7, 3, 1)
 	dlg:show()
 end
@@ -852,29 +879,29 @@ function do_search()
 	local query = search_input:get_text()
 
 	if username == "" or password == "" then
-		status_label:set_text("Enter your kamui-subs.cz username and password first.")
+		status_label:set_text(L("Enter your kamui-subs.cz username and password first.", "Nejdřív zadejte své uživatelské jméno a heslo ke kamui-subs.cz."))
 		return
 	end
 	if query == "" then
-		status_label:set_text("Type a show title to search for.")
+		status_label:set_text(L("Type a show title to search for.", "Napište název, který chcete hledat."))
 		return
 	end
 
 	hf_remember_credentials(save_credentials, username, password)
 	save_zip_password(zip_password)
 
-	status_label:set_text("Logging in...")
+	status_label:set_text(L("Logging in...", "Přihlašuji se..."))
 	dlg:update()
 	if not hf_login(username, password, login) then
-		status_label:set_text("Login failed (see debug log) - check username/password.")
+		status_label:set_text(L("Login failed (see debug log) - check username/password.", "Přihlášení selhalo (podrobnosti v logu) - zkontrolujte uživatelské jméno a heslo."))
 		return
 	end
 
-	status_label:set_text("Searching...")
+	status_label:set_text(L("Searching...", "Hledám..."))
 	dlg:update()
 	local html = get("https://kamui-subs.cz/?s=" .. urlencode(query))
 	if html == nil then
-		status_label:set_text("Search request failed to run (see debug log).")
+		status_label:set_text(L("Search request failed to run (see debug log).", "Hledání se nepodařilo spustit (podrobnosti v logu)."))
 		return
 	end
 
@@ -888,28 +915,28 @@ function do_search()
 	current_stage = "search"
 
 	if #show_pages == 0 then
-		status_label:set_text("No results for '" .. query .. "'.")
+		status_label:set_text(L("No results for '%s'.", "Pro „%s“ nebylo nic nalezeno.", query))
 	else
-		status_label:set_text(#show_pages .. " page(s) matched (one per season). Select one, then 'View Episodes'.")
+		status_label:set_text(L("%s page(s) matched (one per season). Select one, then 'View Episodes'.", "Nalezené stránky (každá série zvlášť): %s. Vyberte jednu a klikněte na „Zobrazit epizody“.", #show_pages))
 	end
 end
 
 function do_view_episodes()
 	if current_stage ~= "search" then
-		status_label:set_text("Do a search first, then select a show/season from the list.")
+		status_label:set_text(L("Do a search first, then select a show/season from the list.", "Nejdřív vyhledávejte, pak vyberte anime/sérii ze seznamu."))
 		return
 	end
 	local sel = results_list:get_selection()
 	local idx = nil
 	for id, _ in pairs(sel) do idx = id break end
 	if idx == nil or show_pages[idx] == nil then
-		status_label:set_text("Select a show/season from the list first.")
+		status_label:set_text(L("Select a show/season from the list first.", "Nejdřív vyberte anime/sérii ze seznamu."))
 		return
 	end
 	local show = show_pages[idx]
 	current_show_title = show.title
 
-	status_label:set_text("Loading episode list...")
+	status_label:set_text(L("Loading episode list...", "Načítám seznam epizod..."))
 	dlg:update()
 
 	local username = user_input:get_text()
@@ -918,7 +945,7 @@ function do_view_episodes()
 
 	local html = get(show.url)
 	if html == nil then
-		status_label:set_text("Request failed to run (see debug log).")
+		status_label:set_text(L("Request failed to run (see debug log).", "Požadavek se nepodařilo spustit (podrobnosti v logu)."))
 		return
 	end
 
@@ -936,27 +963,27 @@ function do_view_episodes()
 	current_stage = "episodes"
 
 	if #ep_rows == 0 then
-		status_label:set_text("No numbered episodes found on '" .. current_show_title .. "' (see debug log).")
+		status_label:set_text(L("No numbered episodes found on '%s' (see debug log).", "Na stránce „%s“ nebyly nalezeny žádné očíslované epizody (podrobnosti v logu).", current_show_title))
 	else
-		status_label:set_text(#ep_rows .. " episode(s) for '" .. current_show_title .. "'. Select one, then Download.")
+		status_label:set_text(L("%s episode(s) for '%s'. Select one, then Download.", "Nalezené epizody (%s) pro „%s“. Vyberte jednu a klikněte na Stáhnout.", #ep_rows, current_show_title))
 	end
 end
 
 function do_download()
 	if current_stage ~= "episodes" then
-		status_label:set_text("View a show's episodes first, then select one to download.")
+		status_label:set_text(L("View a show's episodes first, then select one to download.", "Nejdřív zobrazte epizody, pak vyberte jednu ke stažení."))
 		return
 	end
 	local sel = results_list:get_selection()
 	local idx = nil
 	for id, _ in pairs(sel) do idx = id break end
 	if idx == nil or ep_rows[idx] == nil then
-		status_label:set_text("Select an episode from the list first.")
+		status_label:set_text(L("Select an episode from the list first.", "Nejdřív vyberte epizodu ze seznamu."))
 		return
 	end
 	local row = ep_rows[idx]
 
-	status_label:set_text("Downloading...")
+	status_label:set_text(L("Downloading...", "Stahuji..."))
 	dlg:update()
 
 	local username = user_input:get_text()
@@ -964,7 +991,7 @@ function do_download()
 	local zip_password = zippw_input:get_text()
 	save_zip_password(zip_password)
 	if not hf_login(username, password, login) then
-		status_label:set_text("Login failed - can't download (see debug log).")
+		status_label:set_text(L("Login failed - can't download (see debug log).", "Přihlášení selhalo - nelze stahovat (podrobnosti v logu)."))
 		return
 	end
 
@@ -975,7 +1002,7 @@ function do_download()
 		out, err = run(cmd)
 	end
 	if out == nil then
-		status_label:set_text("curl did not run: " .. tostring(err))
+		status_label:set_text(L("curl did not run: %s", "curl se nepodařilo spustit: %s", tostring(err)))
 		return
 	end
 
@@ -985,7 +1012,7 @@ function do_download()
 	vlc.msg.dbg("[Kamui] " .. row.href .. " -> " .. tostring(zip_size) .. " bytes at " .. zip_path)
 
 	if zip_size == 0 then
-		status_label:set_text("Download failed - empty response (see debug log). Try again in a moment.")
+		status_label:set_text(L("Download failed - empty response (see debug log). Try again in a moment.", "Stažení selhalo - prázdná odpověď (podrobnosti v logu). Zkuste to za chvíli znovu."))
 		return
 	end
 

@@ -43,7 +43,7 @@ Debug: enable VLC's debug log (Tools -> Messages, verbosity 2) and look for
 lines starting with "[Hanabi]". The token is never logged.
 ]]
 
-local VERSION = "1.0.2"
+local VERSION = "1.1.0"
 local TAG = "[Hanabi]"
 local PREFIX = "hanabi" -- file-name prefix for everything this extension creates
 local API_BASE = "https://hanabi.fan/wp-json/hanabi/v1"
@@ -126,14 +126,41 @@ end
 -- makes later tools run inside it instead: at most one short flash when
 -- the extension opens, none after that. Calling this again (or from
 -- another extension) is harmless: the console already exists.
-local function quiet_console()
-	if not is_windows() or not (vlc.win and vlc.win.console_init) then return end
-	local ok, err = pcall(vlc.win.console_init)
-	if not ok then
-		log("couldn't create the hidden console: " .. tostring(err))
-		return
+-- The same PowerShell call also reports the Windows display language.
+--
+-- The UI is in Czech when the system language is Czech or Slovak, and in
+-- English otherwise. start_extension runs both when the extension opens.
+local ui_lang = "en"
+
+-- L("english", "czech", ...): the text for the UI language, with %s
+-- placeholders filled in like string.format
+local function L(en, cs, ...)
+	return string.format((ui_lang == "cs") and cs or en, ...)
+end
+
+local function language_of(code)
+	code = string.lower(code or "")
+	if string.match(code, "^%s*cs") or string.match(code, "^%s*sk") then return "cs" end
+	return "en"
+end
+
+local function start_extension()
+	local env = os.getenv("LC_ALL") or os.getenv("LC_MESSAGES") or os.getenv("LANG")
+	if is_windows() then
+		if vlc.win and vlc.win.console_init then
+			local ok, err = pcall(vlc.win.console_init)
+			if not ok then log("couldn't create the hidden console: " .. tostring(err)) end
+		end
+		local culture = run('powershell -NoProfile -WindowStyle Hidden -Command "(Get-UICulture).Name"')
+		ui_lang = language_of(culture)
+	elseif env and env ~= "" and env ~= "C" and env ~= "POSIX" and not string.match(env, "^C%.") then
+		ui_lang = language_of(env)
+	else
+		-- macOS apps started from the Dock or Finder get no LANG
+		local langs = run("defaults read -g AppleLanguages 2>/dev/null") or ""
+		ui_lang = language_of(string.match(langs, '"?([%a%-_]+)'))
 	end
-	run("powershell -NoProfile -WindowStyle Hidden -Command exit")
+	log("UI language: " .. ui_lang)
 end
 
 local function read_file(path)
@@ -588,12 +615,13 @@ local function api_error_text(status, body)
 	local msg = (type(data) == "table") and jv(data.message) or nil
 	if type(msg) ~= "string" then msg = nil end
 	if status == 401 or status == 403 then
-		return "Hanabi rejected the token (missing, wrong, or account not approved)."
-			.. (msg and (" Hanabi says: " .. msg) or "")
+		return L("Hanabi rejected the token (missing, wrong, or account not approved).",
+				"Hanabi odmítlo token (chybí, je špatný, nebo účet není schválený).")
+			.. (msg and L(" Hanabi says: %s", " Hanabi píše: %s", msg) or "")
 	end
-	if status == 0 then return "Couldn't reach Hanabi (see debug log)." end
-	if status == 429 then return "Hanabi rate limit hit, please wait a bit and try again." end
-	return msg or ("Hanabi returned HTTP " .. status .. ".")
+	if status == 0 then return L("Couldn't reach Hanabi (see debug log).", "Nepodařilo se spojit s Hanabi (podrobnosti v logu).") end
+	if status == 429 then return L("Hanabi rate limit hit, please wait a bit and try again.", "Dosažen limit požadavků Hanabi, chvíli počkejte a zkuste to znovu.") end
+	return msg or L("Hanabi returned HTTP %s.", "Hanabi vrátilo chybu HTTP %s.", status)
 end
 
 -- Runs a GET with Hanabi's rate-limit handling: on HTTP 429 it waits the
@@ -605,13 +633,13 @@ local function api_get_with_retry(url, token, out_path, timeout, max_bytes)
 		local wait = retry_after(headers) or 5
 		if wait <= MAX_RATE_LIMIT_WAIT then
 			log("HTTP 429, waiting " .. wait .. "s (Retry-After) and retrying once")
-			set_status("Hanabi rate limit hit, waiting " .. wait .. " s...")
+			set_status(L("Hanabi rate limit hit, waiting %s s...", "Dosažen limit požadavků Hanabi, čekám %s s...", wait))
 			pause(wait)
 			status, headers, curl_err = api_http(url, token, out_path, timeout, max_bytes)
 		else
 			log("HTTP 429, Retry-After=" .. wait .. "s is too long, not retrying")
-			return status, headers, curl_err, "Hanabi rate limit hit, try again in about "
-				.. math.max(1, math.floor(wait / 60)) .. " minute(s)."
+			return status, headers, curl_err, L("Hanabi rate limit hit, try again in about %s minute(s).",
+				"Dosažen limit požadavků Hanabi, zkuste to znovu asi za %s min.", math.max(1, math.floor(wait / 60)))
 		end
 	end
 	return status, headers, curl_err
@@ -628,7 +656,7 @@ local function api_get_json(path_and_query, token)
 		local data, err = json_decode(body)
 		if data == nil then
 			log("bad JSON from " .. path_and_query .. ": " .. tostring(err))
-			return false, "Unexpected response from Hanabi (see debug log)."
+			return false, L("Unexpected response from Hanabi (see debug log).", "Neočekávaná odpověď od Hanabi (podrobnosti v logu).")
 		end
 		return true, data
 	end
@@ -705,7 +733,7 @@ end
 
 local function release_display(r)
 	local ep = num_str(r.episode)
-	local text = (ep and ("E" .. (tonumber(ep) and tonumber(ep) < 10 and "0" or "") .. ep) or "(whole-season pack)")
+	local text = (ep and ("E" .. (tonumber(ep) and tonumber(ep) < 10 and "0" or "") .. ep) or L("(whole-season pack)", "(balík celé série)"))
 		.. " - " .. (str_field(r, "release") or "?")
 	local version = str_field(r, "version")
 	if version then text = text .. " v" .. version end
@@ -811,10 +839,10 @@ end
 
 -- Returns (ok, reason). Rejects empty, oversized and HTML responses.
 local function check_download(data)
-	if not data or #data == 0 then return false, "empty response" end
-	if #data > MAX_DOWNLOAD_BYTES then return false, "larger than expected (" .. #data .. " bytes)" end
+	if not data or #data == 0 then return false, L("empty response", "prázdná odpověď") end
+	if #data > MAX_DOWNLOAD_BYTES then return false, L("larger than expected (%s bytes)", "soubor je větší, než by měl být (%s bajtů)", #data) end
 	local head = string.gsub(string.sub(data, 1, 512), "^\239\187\191", "") -- drop UTF-8 BOM
-	if string.match(head, "^%s*<") then return false, "the site returned a web page instead of a subtitle" end
+	if string.match(head, "^%s*<") then return false, L("the site returned a web page instead of a subtitle", "stránka místo titulků vrátila webovou stránku") end
 	return true
 end
 
@@ -838,7 +866,7 @@ end
 --[[ ---------------- dialog ---------------- ]]
 
 function activate()
-	pcall(quiet_console)
+	pcall(start_extension)
 	pcall(cleanup_old_subtitles)
 	show_dialog()
 end
@@ -858,25 +886,27 @@ function show_dialog()
 	local guessed_title = guess_title_from_playing()
 	local guessed_ep = guess_episode_from_playing()
 
-	dlg:add_label("Access token:", 1, 1, 1, 1)
+	dlg:add_label(L("Access token:", "Přístupový token:"), 1, 1, 1, 1)
 	token_input = dlg:add_password(loaded_token, 2, 1, 2, 1)
-	dlg:add_label("Search:", 1, 2, 1, 1)
+	dlg:add_label(L("Search:", "Hledat:"), 1, 2, 1, 1)
 	search_input = dlg:add_text_input(guessed_title or "", 2, 2, 2, 1)
-	dlg:add_label("Episode (optional):", 1, 3, 1, 1)
+	dlg:add_label(L("Episode (optional):", "Epizoda (nepovinné):"), 1, 3, 1, 1)
 	episode_input = dlg:add_text_input(guessed_ep and tostring(guessed_ep) or "", 2, 3, 2, 1)
-	dlg:add_button("Search", do_search, 1, 4, 1, 1)
-	dlg:add_button("View Subtitles", do_view_releases, 2, 4, 1, 1)
-	dlg:add_button("Download Selected", do_download, 3, 4, 1, 1)
+	dlg:add_button(L("Search", "Hledat"), do_search, 1, 4, 1, 1)
+	dlg:add_button(L("View Subtitles", "Zobrazit titulky"), do_view_releases, 2, 4, 1, 1)
+	dlg:add_button(L("Download Selected", "Stáhnout vybrané"), do_download, 3, 4, 1, 1)
 
 	results_list = dlg:add_list(1, 5, 3, 1)
 	local initial_status
 	if loaded_token == "" then
-		initial_status = "Paste your access token (hanabi.fan > account settings > 'P\197\153\195\173stupov\195\189 token'), then Search."
+		initial_status = L("Paste your access token (hanabi.fan > account settings > 'P\197\153\195\173stupov\195\189 token'), then Search.",
+			"Vložte svůj přístupový token (hanabi.fan > nastavení účtu > „Přístupový token“) a klikněte na Hledat.")
 	elseif guessed_title then
-		initial_status = "Guessed '" .. guessed_title .. "'" .. (guessed_ep and (", episode " .. guessed_ep) or "")
-			.. " from the playing file. Edit if wrong, then Search."
+		initial_status = L("Guessed '%s'%s from the playing file. Edit if wrong, then Search.",
+			"Odhadnutý název „%s“%s podle přehrávaného souboru - případně ho upravte a klikněte na Hledat.",
+			guessed_title, guessed_ep and L(", episode %s", ", epizoda %s", guessed_ep) or "")
 	else
-		initial_status = "Type a show title, then Search."
+		initial_status = L("Type a show title, then Search.", "Napište název anime a klikněte na Hledat.")
 	end
 	status_label = dlg:add_label(initial_status, 1, 6, 3, 1)
 	dlg:show()
@@ -914,16 +944,16 @@ end
 function do_search()
 	local token = current_token()
 	if token == "" then
-		set_status("Paste your Hanabi access token first.")
+		set_status(L("Paste your Hanabi access token first.", "Nejdřív vložte svůj přístupový token k Hanabi."))
 		return
 	end
 	local query = trim(search_input:get_text())
 	if query == "" then
-		set_status("Type a show title to search for.")
+		set_status(L("Type a show title to search for.", "Napište název, který chcete hledat."))
 		return
 	end
 
-	set_status("Searching Hanabi...")
+	set_status(L("Searching Hanabi...", "Hledám na Hanabi..."))
 	local found, err = search_projects(query, token)
 	if not found then
 		set_status(err)
@@ -938,27 +968,27 @@ function do_search()
 	end
 	current_stage = "search"
 	if #projects == 0 then
-		set_status("No projects found for '" .. query .. "'.")
+		set_status(L("No projects found for '%s'.", "Pro „%s“ nebyly nalezeny žádné projekty.", query))
 	else
-		set_status(#projects .. " project(s) found. Select one, then 'View Subtitles'.")
+		set_status(L("%s project(s) found. Select one, then 'View Subtitles'.", "Nalezené projekty: %s. Vyberte jeden a klikněte na „Zobrazit titulky“.", #projects))
 	end
 end
 
 function do_view_releases()
 	if current_stage ~= "search" then
-		set_status("Search first, then select a project from the list.")
+		set_status(L("Search first, then select a project from the list.", "Nejdřív vyhledávejte, pak vyberte projekt ze seznamu."))
 		return
 	end
 	local idx = selected_index()
 	if not idx or not projects[idx] then
-		set_status("Select a project from the list first.")
+		set_status(L("Select a project from the list first.", "Nejdřív vyberte projekt ze seznamu."))
 		return
 	end
 	local token = current_token()
 	current_project = projects[idx]
 	local name = project_display(current_project)
 	local ep = episode_filter()
-	set_status("Loading subtitles for '" .. name .. "'" .. (ep and (", episode " .. ep) or "") .. "...")
+	set_status(L("Loading subtitles for '%s'%s...", "Načítám titulky pro „%s“%s...", name, (ep and (", episode " .. ep) or "")))
 
 	local found, err = fetch_releases(current_project.id, ep, token)
 	if not found then
@@ -985,22 +1015,22 @@ function do_view_releases()
 	end
 	current_stage = "releases"
 	if #releases == 0 then
-		set_status("No subtitles found for '" .. name .. "'.")
+		set_status(L("No subtitles found for '%s'.", "Pro „%s“ nebyly nalezeny žádné titulky.", name))
 	elseif fell_back then
-		set_status("Nothing for episode " .. ep .. ", showing all " .. #releases .. " subtitle(s). Select one, then Download.")
+		set_status(L("Nothing for episode %s, showing all %s subtitle(s). Select one, then Download.", "Pro epizodu %s nic není, zobrazuji všechny titulky (%s). Vyberte jedny a klikněte na Stáhnout.", ep, #releases))
 	else
-		set_status(#releases .. " subtitle(s). Select one, then Download.")
+		set_status(L("%s subtitle(s). Select one, then Download.", "Nalezené titulky: %s. Vyberte jedny a klikněte na Stáhnout.", #releases))
 	end
 end
 
 local function download_selected()
 	if current_stage ~= "releases" then
-		set_status("View a project's subtitles first, then select one to download.")
+		set_status(L("View a project's subtitles first, then select one to download.", "Nejdřív zobrazte titulky projektu, pak vyberte ty ke stažení."))
 		return
 	end
 	local idx = selected_index()
 	if not idx or not releases[idx] then
-		set_status("Select a subtitle from the list first.")
+		set_status(L("Select a subtitle from the list first.", "Nejdřív vyberte titulky ze seznamu."))
 		return
 	end
 	local release = releases[idx]
@@ -1008,17 +1038,17 @@ local function download_selected()
 	local url = str_field(release, "download_url")
 	if not url then
 		log("release has no download_url")
-		set_status("This subtitle has no download link (see debug log).")
+		set_status(L("This subtitle has no download link (see debug log).", "Tyto titulky nemají odkaz ke stažení (podrobnosti v logu)."))
 		return
 	end
 	-- the token is only ever sent to Hanabi itself
 	if not string.match(url, "^https://hanabi%.fan/") then
 		log("refusing to send the token to a non-Hanabi download URL: " .. url)
-		set_status("Download link points outside hanabi.fan, refusing for safety (see debug log).")
+		set_status(L("Download link points outside hanabi.fan, refusing for safety (see debug log).", "Odkaz ke stažení vede mimo hanabi.fan, z bezpečnostních důvodů ho odmítám (podrobnosti v logu)."))
 		return
 	end
 
-	set_status("Downloading...")
+	set_status(L("Downloading...", "Stahuji..."))
 	local work = work_dir()
 	remove_dir(work)
 	make_dir(work)
@@ -1029,37 +1059,37 @@ local function download_selected()
 		return
 	end
 	if string.find(curl_err or "", "(63)", 1, true) then
-		set_status("Download refused: the file is larger than expected.")
+		set_status(L("Download refused: the file is larger than expected.", "Stažení odmítnuto: soubor je větší, než by měl být."))
 		return
 	end
 	local data = read_file(zip_path)
 	if status ~= 200 then
 		log("download -> HTTP " .. status .. ((curl_err or "") ~= "" and (" (" .. curl_err .. ")") or ""))
-		set_status("Download failed: " .. api_error_text(status, data))
+		set_status(L("Download failed: %s", "Stažení selhalo: %s", api_error_text(status, data)))
 		return
 	end
 	local ok, reason = check_download(data)
 	if not ok then
 		log("download rejected: " .. reason)
-		set_status("Download failed: " .. reason .. ".")
+		set_status(L("Download failed: %s.", "Stažení selhalo: %s.", reason))
 		return
 	end
 	-- the API always serves a ZIP: anything else is an error page or junk,
 	-- rejected rather than guessed at and saved as a subtitle
 	if string.sub(data, 1, 2) ~= "PK" then
 		log("download isn't a ZIP (first bytes: " .. string.gsub(string.sub(data, 1, 16), "[^%w%p ]", "?") .. ")")
-		set_status("Download failed: the response wasn't a subtitle archive (see debug log).")
+		set_status(L("Download failed: the response wasn't a subtitle archive (see debug log).", "Stažení selhalo: odpověď nebyl archiv s titulky (podrobnosti v logu)."))
 		return
 	end
 	local total, info = inspect_zip(data)
 	if not total then
 		log("zip refused: " .. tostring(info))
-		set_status("Downloaded archive looks broken or unsafe (see debug log).")
+		set_status(L("Downloaded archive looks broken or unsafe (see debug log).", "Stažený archiv vypadá poškozeně nebo nebezpečně (podrobnosti v logu)."))
 		return
 	end
 	if total > MAX_EXTRACTED_BYTES then
 		log("zip refused: " .. total .. " bytes uncompressed")
-		set_status("Download refused: the archive is far too large when unpacked.")
+		set_status(L("Download refused: the archive is far too large when unpacked.", "Stažení odmítnuto: archiv by byl po rozbalení příliš velký."))
 		return
 	end
 
@@ -1077,7 +1107,7 @@ local function download_selected()
 	end
 	table.sort(subs)
 	if #subs == 0 then
-		set_status("Downloaded, but there was no subtitle file in the archive (see debug log).")
+		set_status(L("Downloaded, but there was no subtitle file in the archive (see debug log).", "Staženo, ale v archivu nejsou žádné titulky (podrobnosti v logu)."))
 		return
 	end
 
@@ -1088,10 +1118,10 @@ local function download_selected()
 		chosen = pick_episode_file(subs, ep)
 		if not chosen then
 			log("pack with " .. #subs .. " files, none matched episode " .. tostring(ep))
-			set_status("This is a pack of " .. #subs .. " files. Put the episode number in the Episode field, then Download again.")
+			set_status(L("This is a pack of %s files. Put the episode number in the Episode field, then Download again.", "Tohle je balík %s souborů. Zadejte číslo epizody do pole Epizoda a stáhněte znovu.", #subs))
 			return
 		end
-		note = " (from a pack of " .. #subs .. ")"
+		note = L(" (from a pack of %s)", " (z balíku %s souborů)", #subs)
 	end
 
 	local ext = string.lower(string.match(chosen, "%.(%w+)$") or "srt")
@@ -1102,15 +1132,15 @@ local function download_selected()
 	local final_path = join(dest_dir, final_name)
 	if not copy_file(chosen, final_path) then
 		log("could not write " .. final_path)
-		set_status("Downloaded, but couldn't save into " .. dest_dir .. " (see debug log).")
+		set_status(L("Downloaded, but couldn't save into %s (see debug log).", "Staženo, ale nepodařilo se uložit do %s (podrobnosti v logu).", dest_dir))
 		return
 	end
 	log("saved subtitle to " .. final_path)
 
 	if attach_subtitle(final_path) then
-		set_status("Downloaded and applied" .. note .. ": " .. final_name)
+		set_status(L("Downloaded and applied%s: %s", "Staženo a načteno%s: %s", note, final_name))
 	else
-		set_status("Saved to " .. final_path .. note .. " (no video playing, open one and add it manually).")
+		set_status(L("Saved to %s%s (no video playing, open one and add it manually).", "Uloženo do %s%s (nehraje žádné video, otevřete ho a titulky přidejte ručně).", final_path, note))
 	end
 end
 
@@ -1119,6 +1149,6 @@ function do_download()
 	remove_dir(work_dir())
 	if not ok then
 		log("download error: " .. tostring(err))
-		set_status("Something went wrong during the download (see debug log).")
+		set_status(L("Something went wrong during the download (see debug log).", "Při stahování se něco pokazilo (podrobnosti v logu)."))
 	end
 end

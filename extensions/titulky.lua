@@ -15,8 +15,8 @@ block); login() itself always starts from an empty cookie jar.
 
 function descriptor()
 	return {
-		title = "Titulky.com Subtitles v1.2.1",
-		version = "1.2.1",
+		title = "Titulky.com Subtitles v1.3.0",
+		version = "1.3.0",
 		author = "Highflight Studio",
 		shortdesc = "Titulky.com subtitles (premium)",
 		description = "Search premium.titulky.com and download/apply subtitles.",
@@ -114,14 +114,41 @@ end
 -- makes later tools run inside it instead: at most one short flash when
 -- the extension opens, none after that. Calling this again (or from
 -- another extension) is harmless: the console already exists.
-local function hf_quiet_console(tag)
-	if not hf_is_windows() or not (vlc.win and vlc.win.console_init) then return end
-	local ok, err = pcall(vlc.win.console_init)
-	if not ok then
-		hf_log(tag, "couldn't create the hidden console: " .. tostring(err))
-		return
+-- The same PowerShell call also reports the Windows display language.
+--
+-- The UI is in Czech when the system language is Czech or Slovak, and in
+-- English otherwise. hf_start runs both when the extension opens.
+local hf_lang = "en"
+
+-- L("english", "czech", ...): the text for the UI language, with %s
+-- placeholders filled in like string.format
+local function L(en, cs, ...)
+	return string.format((hf_lang == "cs") and cs or en, ...)
+end
+
+local function hf_language_of(code)
+	code = string.lower(code or "")
+	if string.match(code, "^%s*cs") or string.match(code, "^%s*sk") then return "cs" end
+	return "en"
+end
+
+local function hf_start(tag)
+	local env = os.getenv("LC_ALL") or os.getenv("LC_MESSAGES") or os.getenv("LANG")
+	if hf_is_windows() then
+		if vlc.win and vlc.win.console_init then
+			local ok, err = pcall(vlc.win.console_init)
+			if not ok then hf_log(tag, "couldn't create the hidden console: " .. tostring(err)) end
+		end
+		local culture = hf_run(tag, 'powershell -NoProfile -WindowStyle Hidden -Command "(Get-UICulture).Name"')
+		hf_lang = hf_language_of(culture)
+	elseif env and env ~= "" and env ~= "C" and env ~= "POSIX" and not string.match(env, "^C%.") then
+		hf_lang = hf_language_of(env)
+	else
+		-- macOS apps started from the Dock or Finder get no LANG
+		local langs = hf_run(tag, "defaults read -g AppleLanguages 2>/dev/null") or ""
+		hf_lang = hf_language_of(string.match(langs, '"?([%a%-_]+)'))
 	end
-	hf_run(tag, "powershell -NoProfile -WindowStyle Hidden -Command exit")
+	hf_log(tag, "UI language: " .. hf_lang)
 end
 
 local function hf_read(path)
@@ -288,10 +315,10 @@ local function hf_inspect_zip(data)
 end
 
 local function hf_check_download(data)
-	if not data or #data == 0 then return false, "empty response" end
-	if #data > HF_MAX_DOWNLOAD_BYTES then return false, "larger than a subtitle should be" end
+	if not data or #data == 0 then return false, L("empty response", "prázdná odpověď") end
+	if #data > HF_MAX_DOWNLOAD_BYTES then return false, L("larger than a subtitle should be", "soubor je na titulky příliš velký") end
 	local head = string.gsub(string.sub(data, 1, 512), "^\239\187\191", "")
-	if string.match(head, "^%s*<") then return false, "the site returned a web page instead of a subtitle" end
+	if string.match(head, "^%s*<") then return false, L("the site returned a web page instead of a subtitle", "stránka místo titulků vrátila webovou stránku") end
 	return true
 end
 
@@ -376,7 +403,7 @@ local function hf_finish(o)
 	if not ok then
 		hf_log(tag, "download rejected: " .. reason)
 		os.remove(o.body_path)
-		return "Download failed: " .. reason .. ". Try again in a moment."
+		return L("Download failed: %s. Try again in a moment.", "Stažení selhalo: %s. Zkuste to za chvíli znovu.", reason)
 	end
 
 	local work = hf_join(vlc.config.userdatadir(), o.prefix .. "_work")
@@ -394,23 +421,23 @@ local function hf_finish(o)
 		local total, info, encrypted = hf_inspect_zip(data)
 		if not total then
 			hf_log(tag, "zip refused: " .. tostring(info))
-			return done("Downloaded a zip but it looks broken or unsafe (see debug log).")
+			return done(L("Downloaded a zip but it looks broken or unsafe (see debug log).", "ZIP se stáhl, ale vypadá poškozeně nebo nebezpečně (podrobnosti v logu)."))
 		end
 		if total > HF_MAX_EXTRACTED_BYTES then
 			hf_log(tag, "zip refused: " .. total .. " bytes uncompressed")
-			return done("Download refused: the archive is far too large when unpacked.")
+			return done(L("Download refused: the archive is far too large when unpacked.", "Stažení odmítnuto: archiv by byl po rozbalení příliš velký."))
 		end
 		if encrypted and (not o.zip_password or o.zip_password == "") then
 			hf_log(tag, "zip is password-protected and no zip password is set")
-			return done("This zip needs a password - fill in the zip password field, then download again.")
+			return done(L("This zip needs a password - fill in the zip password field, then download again.", "Tento ZIP potřebuje heslo - vyplňte heslo k ZIPu a stáhněte znovu."))
 		end
 		local zip_path = hf_join(work, "download.zip")
 		hf_write(zip_path, data)
 		src = hf_extract(tag, zip_path, hf_join(work, "extract"), o.zip_password, encrypted)
 		if not src then
 			return done(encrypted
-					and "Couldn't unpack the zip - check the zip password (see debug log)."
-					or "Downloaded a zip but found no subtitle inside (see debug log).")
+					and L("Couldn't unpack the zip - check the zip password (see debug log).", "ZIP se nepodařilo rozbalit - zkontrolujte heslo k ZIPu (podrobnosti v logu).")
+					or L("Downloaded a zip but found no subtitle inside (see debug log).", "ZIP se stáhl, ale nejsou v něm žádné titulky (podrobnosti v logu)."))
 		end
 		ext = string.lower(string.match(src, "%.(%w+)$") or "srt")
 	else
@@ -426,19 +453,19 @@ local function hf_finish(o)
 	local content = hf_read(src)
 	if not content or not hf_write(final_path, content) then
 		hf_log(tag, "could not write " .. final_path)
-		return done("Downloaded, but couldn't save into " .. dest_dir .. " (see debug log).")
+		return done(L("Downloaded, but couldn't save into %s (see debug log).", "Staženo, ale nepodařilo se uložit do %s (podrobnosti v logu).", dest_dir))
 	end
 	hf_log(tag, "saved subtitle to " .. final_path)
 
 	if hf_attach(final_path) then
-		return done("Downloaded and applied: " .. final_name)
+		return done(L("Downloaded and applied: %s", "Staženo a načteno: %s", final_name))
 	end
-	return done("Saved to " .. final_path .. " (no video playing, open one and add it manually).")
+	return done(L("Saved to %s (no video playing, open one and add it manually).", "Uloženo do %s (nehraje žádné video, otevřete ho a titulky přidejte ručně).", final_path))
 end
 -- <<< shared block "hf_download"
 
 function activate()
-	pcall(hf_quiet_console, "[Titulky]")
+	pcall(hf_start, "[Titulky]")
 	pcall(hf_cleanup_old, "[Titulky]", "titulky")
 	show_dialog()
 end
@@ -507,7 +534,7 @@ end
 -- VERSION_TAG: shown in the dialog's title bar. Keep it in step with
 -- descriptor().version; if the title bar shows an old version, VLC is
 -- still running an old copy of this file.
-local VERSION_TAG = "v1.2.1"
+local VERSION_TAG = "v1.3.0"
 
 function show_dialog()
 	dlg = vlc.dialog("Titulky.com Subtitles (" .. VERSION_TAG .. ")")
@@ -522,21 +549,21 @@ function show_dialog()
 	-- button row has one button per column (3 in total).
 	local WIDE = 720
 
-	dlg:add_label("Username:", 1, 1, 1, 1)
+	dlg:add_label(L("Username:", "Uživatelské jméno:"), 1, 1, 1, 1)
 	user_input = dlg:add_text_input(saved_username, 2, 1, 2, 1, WIDE, 24)
-	dlg:add_label("Password:", 1, 2, 1, 1)
+	dlg:add_label(L("Password:", "Heslo:"), 1, 2, 1, 1)
 	pass_input = dlg:add_password(saved_password, 2, 2, 2, 1, WIDE, 24)
 
-	dlg:add_label("Search:", 1, 3, 1, 1)
+	dlg:add_label(L("Search:", "Hledat:"), 1, 3, 1, 1)
 	search_input = dlg:add_text_input(guessed_title or "", 2, 3, 2, 1, WIDE, 24)
-	dlg:add_button("Search", do_search, 1, 4, 1, 1)
-	dlg:add_button("Download Selected", do_download_start, 2, 4, 1, 1)
-	dlg:add_button("Clear", do_clear, 3, 4, 1, 1)
+	dlg:add_button(L("Search", "Hledat"), do_search, 1, 4, 1, 1)
+	dlg:add_button(L("Download Selected", "Stáhnout vybrané"), do_download_start, 2, 4, 1, 1)
+	dlg:add_button(L("Clear", "Vymazat"), do_clear, 3, 4, 1, 1)
 
 	results_list = dlg:add_list(1, 5, 3, 1, WIDE, 160)
 	local initial_status = guessed_title
-		and ("Guessed '" .. guessed_title .. "' from the playing file - edit if wrong, then Search.")
-		or "Needs your premium titulky.com login. Type a title and hit Search."
+		and L("Guessed '%s' from the playing file - edit if wrong, then Search.", "Odhadnutý název „%s“ podle přehrávaného souboru - případně ho upravte a klikněte na Hledat.", guessed_title)
+		or L("Needs your premium titulky.com login. Type a title and hit Search.", "Je potřeba prémiový účet na titulky.com. Napište název a klikněte na Hledat.")
 	status_label = dlg:add_label(initial_status, 1, 6, 3, 1)
 	vlc.msg.dbg("[Titulky] show_dialog: " .. VERSION_TAG .. ", WIDE=" .. WIDE
 			.. " - if the title bar doesn't say " .. VERSION_TAG .. ", VLC is loading a different titulky.lua than this one")
@@ -880,7 +907,7 @@ local function parse_premium_detail(html, primary_id, primary_title)
 
 	local out = {
 		{ id = primary_id, title = primary_title, date = nil, author = nil,
-			release = release_tag or "top result" },
+			release = release_tag or L("top result", "hlavní verze") },
 	}
 
 	for row_body in string.gmatch(rest_html, '<tr class="pbl%d">(.-)</tr>') do
@@ -919,7 +946,7 @@ function do_clear()
 	sub_rows = {}
 	pending_row = nil
 	results_list:clear()
-	status_label:set_text("Cleared. Type a title and hit Search.")
+	status_label:set_text(L("Cleared. Type a title and hit Search.", "Vymazáno. Napište název a klikněte na Hledat."))
 end
 
 function do_search()
@@ -928,30 +955,30 @@ function do_search()
 	local query = search_input:get_text()
 
 	if username == "" or password == "" then
-		status_label:set_text("Needs a premium titulky.com login - enter it above.")
+		status_label:set_text(L("Needs a premium titulky.com login - enter it above.", "Je potřeba prémiový účet na titulky.com - zadejte ho nahoře."))
 		return
 	end
 	if query == "" then
-		status_label:set_text("Type a title to search for.")
+		status_label:set_text(L("Type a title to search for.", "Napište název, který chcete hledat."))
 		return
 	end
 
 	hf_remember_credentials(save_credentials, username, password)
 
-	status_label:set_text("Logging in...")
+	status_label:set_text(L("Logging in...", "Přihlašuji se..."))
 	dlg:update()
 	if not hf_login(username, password, login) then
-		status_label:set_text("Login failed (see debug log) - check username/password.")
+		status_label:set_text(L("Login failed (see debug log) - check username/password.", "Přihlášení selhalo (podrobnosti v logu) - zkontrolujte uživatelské jméno a heslo."))
 		return
 	end
 
-	status_label:set_text("Searching...")
+	status_label:set_text(L("Searching...", "Hledám..."))
 	dlg:update()
 	local search_url = "https://premium.titulky.com/?Fulltext=" .. urlencode(query)
 		.. "&exact=&Autor=&Rok=&IMDB=&Serial=&Jazyk=&ASchvalene=&action=search"
 	local html = get(search_url)
 	if html == nil then
-		status_label:set_text("Search request failed to run (see debug log).")
+		status_label:set_text(L("Search request failed to run (see debug log).", "Hledání se nepodařilo spustit (podrobnosti v logu)."))
 		return
 	end
 
@@ -965,7 +992,7 @@ function do_search()
 	if #titles == 0 then
 		sub_rows = {}
 		results_list:clear()
-		status_label:set_text("No results found.")
+		status_label:set_text(L("No results found.", "Nic nenalezeno."))
 	elseif #titles == 1 then
 		show_releases_for_title(titles[1].id, titles[1].title)
 	else
@@ -976,7 +1003,7 @@ function do_search()
 			table.insert(sub_rows, t)
 			results_list:add_value(t.title .. (t.alt and (" (" .. t.alt .. ")") or ""), i)
 		end
-		status_label:set_text(#titles .. " titles matched - select one, then Download to see releases.")
+		status_label:set_text(L("%s titles matched - select one, then Download to see releases.", "Nalezené tituly: %s. Vyberte jeden a klikněte na Stáhnout, zobrazí se jeho verze.", #titles))
 	end
 end
 
@@ -985,13 +1012,13 @@ function show_releases_for_title(id, title)
 	-- label (see the comment above show_dialog()), and the title is
 	-- already visible in the Search box / results list above, so it's
 	-- not repeated here
-	status_label:set_text("Loading releases...")
+	status_label:set_text(L("Loading releases...", "Načítám verze..."))
 	dlg:update()
 
 	local detail_url = "https://premium.titulky.com/?action=detail&id=" .. urlencode(id)
 	local html = get(detail_url)
 	if html == nil then
-		status_label:set_text("Couldn't load releases (see debug log).")
+		status_label:set_text(L("Couldn't load releases (see debug log).", "Nepodařilo se načíst verze (podrobnosti v logu)."))
 		return
 	end
 
@@ -1009,9 +1036,9 @@ function show_releases_for_title(id, title)
 	end
 
 	if #sub_rows == 0 then
-		status_label:set_text("No downloadable releases found (see debug log).")
+		status_label:set_text(L("No downloadable releases found (see debug log).", "Nenalezeny žádné verze ke stažení (podrobnosti v logu)."))
 	else
-		status_label:set_text(#sub_rows .. " release(s) found - select one, then Download.")
+		status_label:set_text(L("%s release(s) found - select one, then Download.", "Nalezené verze: %s. Vyberte jednu a klikněte na Stáhnout.", #sub_rows))
 	end
 end
 
@@ -1020,7 +1047,7 @@ function do_download_start()
 	local idx = nil
 	for id, _ in pairs(sel) do idx = id break end
 	if idx == nil or sub_rows[idx] == nil then
-		status_label:set_text("Select something from the list first.")
+		status_label:set_text(L("Select something from the list first.", "Nejdřív něco vyberte ze seznamu."))
 		return
 	end
 	local row = sub_rows[idx]
@@ -1031,7 +1058,7 @@ function do_download_start()
 	end
 
 	pending_row = row
-	status_label:set_text("Downloading...")
+	status_label:set_text(L("Downloading...", "Stahuji..."))
 	dlg:update()
 
 	local zip_path = vlc.config.userdatadir() .. "/titulky_last_sub.zip"
@@ -1043,7 +1070,7 @@ function do_download_start()
 		out, err = run(cmd)
 	end
 	if out == nil then
-		status_label:set_text("curl did not run: " .. tostring(err))
+		status_label:set_text(L("curl did not run: %s", "curl se nepodařilo spustit: %s", tostring(err)))
 		return
 	end
 

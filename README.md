@@ -8,14 +8,14 @@ Compatible with VLC 3.x on Windows 10/11 and macOS (tested on VLC 3.0.23).
 
 | Extension | Site | Content | Version | Needs | Support |
 |---|---|---|---|---|---|
-| Edna Subtitles | [edna.cz](https://www.edna.cz) | Czech/Slovak TV shows | 1.1.3 | Account | Unofficial |
-| Hanabi Subtitles | [hanabi.fan](https://hanabi.fan) | Czech anime | 1.0.2 | Access token (free account) | **Official API** |
-| Hiyori Subtitles | [hiyori.cz](https://hiyori.cz) | Czech/Slovak anime | 1.2.1 | Account | Unofficial |
-| Kamui-Subs Subtitles | [kamui-subs.cz](https://kamui-subs.cz) | Czech anime | 1.2.1 | Account + ZIP password | Unofficial |
-| Legie Kondor Subtitles | [anime4.legiekondor.cz](https://anime4.legiekondor.cz) | Czech anime | 1.0.2 | Nothing | Unofficial |
-| NyaSub Subtitles | [nyasub.cz](https://nyasub.cz) | Czech anime | 1.0.2 | Nothing | Unofficial |
-| Titulky.com Subtitles | [titulky.com](https://premium.titulky.com) | Czech/Slovak movies and TV | 1.2.1 | Premium account | Unofficial |
-| WoSir Subtitles | [wosir.cz](https://www.wosir.cz) | Czech anime | 1.2.1 | Account | Unofficial |
+| Edna Subtitles | [edna.cz](https://www.edna.cz) | Czech/Slovak TV shows | 1.2.0 | Account | Unofficial |
+| Hanabi Subtitles | [hanabi.fan](https://hanabi.fan) | Czech anime | 1.1.0 | Access token (free account) | **Official API** |
+| Hiyori Subtitles | [hiyori.cz](https://hiyori.cz) | Czech/Slovak anime | 1.3.0 | Account | Unofficial |
+| Kamui-Subs Subtitles | [kamui-subs.cz](https://kamui-subs.cz) | Czech anime | 1.3.0 | Account + ZIP password | Unofficial |
+| Legie Kondor Subtitles | [anime4.legiekondor.cz](https://anime4.legiekondor.cz) | Czech anime | 1.1.0 | Nothing | Unofficial |
+| NyaSub Subtitles | [nyasub.cz](https://nyasub.cz) | Czech anime | 1.1.0 | Nothing | Unofficial |
+| Titulky.com Subtitles | [titulky.com](https://premium.titulky.com) | Czech/Slovak movies and TV | 1.3.0 | Premium account | Unofficial |
+| WoSir Subtitles | [wosir.cz](https://www.wosir.cz) | Czech anime | 1.3.0 | Account | Unofficial |
 
 **Support:**
 - **Official API**: the site publishes and supports an API for exactly this purpose. Documented and stable.
@@ -46,6 +46,8 @@ Then quit VLC completely and start it again. The extensions are in the **View** 
 1. Play a video. Most extensions guess the show title (and episode) from the file name
 2. Open the extension, fill in your login if the site needs one (it's remembered), and click **Search**
 3. Pick the show, then the subtitle, then **Download Selected**. It's downloaded, unpacked and applied to the video
+
+The extensions are in Czech when your system language is Czech or Slovak, and in English otherwise.
 
 Subtitles are saved to `Documents/VLC Subtitles` and cleaned up automatically after 30 days. Passwords and tokens are kept in the macOS Keychain or encrypted with Windows DPAPI, and are only ever sent to the site they belong to.
 

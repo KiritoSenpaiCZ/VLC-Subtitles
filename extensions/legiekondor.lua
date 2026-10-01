@@ -34,7 +34,7 @@ Debug: enable VLC's debug log (Tools -> Messages, verbosity 2) and look for
 lines starting with "[LegieKondor]".
 ]]
 
-local VERSION = "1.0.2"
+local VERSION = "1.1.0"
 local TAG = "[LegieKondor]"
 local PREFIX = "legiekondor" -- file-name prefix for everything this extension creates
 local BASE_URL = "https://anime4.legiekondor.cz"
@@ -113,14 +113,41 @@ end
 -- makes later tools run inside it instead: at most one short flash when
 -- the extension opens, none after that. Calling this again (or from
 -- another extension) is harmless: the console already exists.
-local function quiet_console()
-	if not is_windows() or not (vlc.win and vlc.win.console_init) then return end
-	local ok, err = pcall(vlc.win.console_init)
-	if not ok then
-		log("couldn't create the hidden console: " .. tostring(err))
-		return
+-- The same PowerShell call also reports the Windows display language.
+--
+-- The UI is in Czech when the system language is Czech or Slovak, and in
+-- English otherwise. start_extension runs both when the extension opens.
+local ui_lang = "en"
+
+-- L("english", "czech", ...): the text for the UI language, with %s
+-- placeholders filled in like string.format
+local function L(en, cs, ...)
+	return string.format((ui_lang == "cs") and cs or en, ...)
+end
+
+local function language_of(code)
+	code = string.lower(code or "")
+	if string.match(code, "^%s*cs") or string.match(code, "^%s*sk") then return "cs" end
+	return "en"
+end
+
+local function start_extension()
+	local env = os.getenv("LC_ALL") or os.getenv("LC_MESSAGES") or os.getenv("LANG")
+	if is_windows() then
+		if vlc.win and vlc.win.console_init then
+			local ok, err = pcall(vlc.win.console_init)
+			if not ok then log("couldn't create the hidden console: " .. tostring(err)) end
+		end
+		local culture = run('powershell -NoProfile -WindowStyle Hidden -Command "(Get-UICulture).Name"')
+		ui_lang = language_of(culture)
+	elseif env and env ~= "" and env ~= "C" and env ~= "POSIX" and not string.match(env, "^C%.") then
+		ui_lang = language_of(env)
+	else
+		-- macOS apps started from the Dock or Finder get no LANG
+		local langs = run("defaults read -g AppleLanguages 2>/dev/null") or ""
+		ui_lang = language_of(string.match(langs, '"?([%a%-_]+)'))
 	end
-	run("powershell -NoProfile -WindowStyle Hidden -Command exit")
+	log("UI language: " .. ui_lang)
 end
 
 local function read_file(path)
@@ -514,10 +541,10 @@ end
 
 -- Returns (ok, reason). Rejects empty, oversized and HTML responses.
 local function check_download(data)
-	if not data or #data == 0 then return false, "empty response" end
-	if #data > MAX_DOWNLOAD_BYTES then return false, "larger than expected (" .. #data .. " bytes)" end
+	if not data or #data == 0 then return false, L("empty response", "prázdná odpověď") end
+	if #data > MAX_DOWNLOAD_BYTES then return false, L("larger than expected (%s bytes)", "soubor je větší, než by měl být (%s bajtů)", #data) end
 	local head = string.gsub(string.sub(data, 1, 512), "^\239\187\191", "") -- drop UTF-8 BOM
-	if string.match(head, "^%s*<") then return false, "the site returned a web page instead of a subtitle" end
+	if string.match(head, "^%s*<") then return false, L("the site returned a web page instead of a subtitle", "stránka místo titulků vrátila webovou stránku") end
 	return true
 end
 
@@ -572,7 +599,7 @@ end
 --[[ ---------------- dialog ---------------- ]]
 
 function activate()
-	pcall(quiet_console)
+	pcall(start_extension)
 	pcall(cleanup_old_subtitles)
 	show_dialog()
 end
@@ -589,16 +616,16 @@ function show_dialog()
 	dlg = vlc.dialog("Legie Kondor Subtitles v" .. VERSION)
 	local guessed_title = guess_title_from_playing()
 
-	dlg:add_label("Search:", 1, 1, 1, 1)
+	dlg:add_label(L("Search:", "Hledat:"), 1, 1, 1, 1)
 	search_input = dlg:add_text_input(guessed_title or "", 2, 1, 2, 1)
-	dlg:add_button("Search", do_search, 1, 2, 1, 1)
-	dlg:add_button("View Episodes", do_view_episodes, 2, 2, 1, 1)
-	dlg:add_button("Download Selected", do_download, 3, 2, 1, 1)
+	dlg:add_button(L("Search", "Hledat"), do_search, 1, 2, 1, 1)
+	dlg:add_button(L("View Episodes", "Zobrazit epizody"), do_view_episodes, 2, 2, 1, 1)
+	dlg:add_button(L("Download Selected", "Stáhnout vybrané"), do_download, 3, 2, 1, 1)
 
 	results_list = dlg:add_list(1, 3, 3, 1)
 	local initial_status = guessed_title
-		and ("Guessed '" .. guessed_title .. "' from the playing file. Edit if wrong, then Search.")
-		or "Type a show title (or leave empty to list every show), then Search."
+		and L("Guessed '%s' from the playing file. Edit if wrong, then Search.", "Odhadnutý název „%s“ podle přehrávaného souboru - případně ho upravte a klikněte na Hledat.", guessed_title)
+		or L("Type a show title (or leave empty to list every show), then Search.", "Napište název anime (nebo nechte prázdné pro celý seznam) a klikněte na Hledat.")
 	status_label = dlg:add_label(initial_status, 1, 4, 3, 1)
 	dlg:show()
 end
@@ -618,11 +645,11 @@ end
 
 function do_search()
 	local query = trim(search_input:get_text())
-	set_status("Loading the show list (the first search of the day takes a bit longer)...")
+	set_status(L("Loading the show list (the first search of the day takes a bit longer)...", "Načítám seznam anime (první hledání dne trvá o něco déle)..."))
 
 	local shows = get_catalog()
 	if #shows == 0 then
-		set_status("Couldn't load the show list from the site (see debug log).")
+		set_status(L("Couldn't load the show list from the site (see debug log).", "Nepodařilo se načíst seznam anime ze stránky (podrobnosti v logu)."))
 		return
 	end
 
@@ -632,10 +659,10 @@ function do_search()
 		matches = {}
 		for _, s in ipairs(shows) do table.insert(matches, s) end
 		table.sort(matches, function(a, b) return a.title < b.title end)
-		note = (query == "") and (#matches .. " shows on the site.")
-			or ("No match for '" .. query .. "', showing all " .. #matches .. " shows.")
+		note = (query == "") and L("%s shows on the site.", "Anime na stránce: %s.", #matches)
+			or L("No match for '%s', showing all %s shows.", "Pro „%s“ nic nenalezeno, zobrazuji všechna anime (%s).", query, #matches)
 	else
-		note = #matches .. " match(es) for '" .. query .. "'."
+		note = L("%s match(es) for '%s'.", "Nalezené výsledky (%s) pro „%s“.", #matches, query)
 	end
 
 	show_matches = matches
@@ -644,21 +671,21 @@ function do_search()
 		results_list:add_value(s.title, i)
 	end
 	current_stage = "search"
-	set_status(note .. " Select one, then 'View Episodes'.")
+	set_status(L("%s Select one, then 'View Episodes'.", "%s Vyberte jednu a klikněte na „Zobrazit epizody“.", note))
 end
 
 function do_view_episodes()
 	if current_stage ~= "search" then
-		set_status("Search first, then select a show from the list.")
+		set_status(L("Search first, then select a show from the list.", "Nejdřív vyhledávejte, pak vyberte anime ze seznamu."))
 		return
 	end
 	local idx = selected_index()
 	if not idx or not show_matches[idx] then
-		set_status("Select a show from the list first.")
+		set_status(L("Select a show from the list first.", "Nejdřív vyberte pořad ze seznamu."))
 		return
 	end
 	current_show = show_matches[idx]
-	set_status("Loading episodes for '" .. current_show.title .. "'...")
+	set_status(L("Loading episodes for '%s'...", "Načítám epizody pro „%s“...", current_show.title))
 
 	local html = curl_get(BASE_URL .. "/a/" .. current_show.slug .. "/")
 	ep_rows = parse_episode_codes(html, current_show.slug)
@@ -671,25 +698,25 @@ function do_view_episodes()
 	current_stage = "episodes"
 
 	if #ep_rows == 0 then
-		set_status("No episodes found for '" .. current_show.title .. "' (see debug log).")
+		set_status(L("No episodes found for '%s' (see debug log).", "Pro „%s“ nebyly nalezeny žádné epizody (podrobnosti v logu).", current_show.title))
 	else
-		set_status(#ep_rows .. " episode(s) for '" .. current_show.title .. "'. Select one, then Download.")
+		set_status(L("%s episode(s) for '%s'. Select one, then Download.", "Nalezené epizody (%s) pro „%s“. Vyberte jednu a klikněte na Stáhnout.", #ep_rows, current_show.title))
 	end
 end
 
 local function download_selected()
 	if current_stage ~= "episodes" then
-		set_status("View a show's episodes first, then select one to download.")
+		set_status(L("View a show's episodes first, then select one to download.", "Nejdřív zobrazte epizody, pak vyberte jednu ke stažení."))
 		return
 	end
 	local idx = selected_index()
 	if not idx or not ep_rows[idx] then
-		set_status("Select an episode from the list first.")
+		set_status(L("Select an episode from the list first.", "Nejdřív vyberte epizodu ze seznamu."))
 		return
 	end
 	local row = ep_rows[idx]
 	local label = string.format("S%02dE%02d", row.season, row.episode)
-	set_status("Downloading " .. label .. "...")
+	set_status(L("Downloading %s...", "Stahuji %s...", label))
 
 	local work = work_dir()
 	remove_dir(work)
@@ -701,7 +728,7 @@ local function download_selected()
 		MAX_DOWNLOAD_BYTES, hdr_path, dl_path, url)) or ""
 	if string.find(curl_err, "(63)", 1, true) then
 		log("download refused by curl: over " .. MAX_DOWNLOAD_BYTES .. " bytes (" .. url .. ")")
-		set_status("Download refused: the file is larger than a subtitle should be.")
+		set_status(L("Download refused: the file is larger than a subtitle should be.", "Stažení odmítnuto: soubor je na titulky příliš velký."))
 		return
 	end
 
@@ -709,7 +736,7 @@ local function download_selected()
 	local ok, reason = check_download(data)
 	if not ok then
 		log("download rejected: " .. reason .. " (" .. url .. ")")
-		set_status("Download failed: " .. reason .. ". Try again in a moment.")
+		set_status(L("Download failed: %s. Try again in a moment.", "Stažení selhalo: %s. Zkuste to za chvíli znovu.", reason))
 		return
 	end
 
@@ -718,19 +745,19 @@ local function download_selected()
 		local total, info = inspect_zip(data)
 		if not total then
 			log("zip refused: " .. tostring(info))
-			set_status("Downloaded a zip but it looks broken or unsafe (see debug log).")
+			set_status(L("Downloaded a zip but it looks broken or unsafe (see debug log).", "ZIP se stáhl, ale vypadá poškozeně nebo nebezpečně (podrobnosti v logu)."))
 			return
 		end
 		if total > MAX_EXTRACTED_BYTES then
 			log("zip refused: " .. total .. " bytes uncompressed")
-			set_status("Download refused: the archive is far too large when unpacked.")
+			set_status(L("Download refused: the archive is far too large when unpacked.", "Stažení odmítnuto: archiv by byl po rozbalení příliš velký."))
 			return
 		end
 		local zip_path = join(work, "download.zip")
 		os.rename(dl_path, zip_path)
 		sub_path = extract_zip(zip_path, join(work, "extract"))
 		if not sub_path then
-			set_status("Downloaded a zip but found no subtitle inside (see debug log).")
+			set_status(L("Downloaded a zip but found no subtitle inside (see debug log).", "ZIP se stáhl, ale nejsou v něm žádné titulky (podrobnosti v logu)."))
 			return
 		end
 		ext = string.lower(string.match(sub_path, "%.(%w+)$") or "srt")
@@ -745,15 +772,15 @@ local function download_selected()
 	local final_path = join(dest_dir, final_name)
 	if not copy_file(sub_path, final_path) then
 		log("could not write " .. final_path)
-		set_status("Downloaded, but couldn't save into " .. dest_dir .. " (see debug log).")
+		set_status(L("Downloaded, but couldn't save into %s (see debug log).", "Staženo, ale nepodařilo se uložit do %s (podrobnosti v logu).", dest_dir))
 		return
 	end
 	log("saved subtitle to " .. final_path)
 
 	if attach_subtitle(final_path) then
-		set_status("Downloaded and applied: " .. final_name)
+		set_status(L("Downloaded and applied: %s", "Staženo a načteno: %s", final_name))
 	else
-		set_status("Saved to " .. final_path .. " (no video playing, open one and add it manually).")
+		set_status(L("Saved to %s (no video playing, open one and add it manually).", "Uloženo do %s (nehraje žádné video, otevřete ho a titulky přidejte ručně).", final_path))
 	end
 end
 
@@ -762,6 +789,6 @@ function do_download()
 	remove_dir(work_dir())
 	if not ok then
 		log("download error: " .. tostring(err))
-		set_status("Something went wrong during the download (see debug log).")
+		set_status(L("Something went wrong during the download (see debug log).", "Při stahování se něco pokazilo (podrobnosti v logu)."))
 	end
 end

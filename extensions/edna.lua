@@ -22,8 +22,8 @@ Site notes:
 
 function descriptor()
 	return {
-		title = "Edna Subtitles v1.1.3",
-		version = "1.1.3",
+		title = "Edna Subtitles v1.2.0",
+		version = "1.2.0",
 		author = "Highflight Studio",
 		shortdesc = "Edna subtitles",
 		description = "Search edna.cz and download/apply subtitles.",
@@ -127,14 +127,41 @@ end
 -- makes later tools run inside it instead: at most one short flash when
 -- the extension opens, none after that. Calling this again (or from
 -- another extension) is harmless: the console already exists.
-local function hf_quiet_console(tag)
-	if not hf_is_windows() or not (vlc.win and vlc.win.console_init) then return end
-	local ok, err = pcall(vlc.win.console_init)
-	if not ok then
-		hf_log(tag, "couldn't create the hidden console: " .. tostring(err))
-		return
+-- The same PowerShell call also reports the Windows display language.
+--
+-- The UI is in Czech when the system language is Czech or Slovak, and in
+-- English otherwise. hf_start runs both when the extension opens.
+local hf_lang = "en"
+
+-- L("english", "czech", ...): the text for the UI language, with %s
+-- placeholders filled in like string.format
+local function L(en, cs, ...)
+	return string.format((hf_lang == "cs") and cs or en, ...)
+end
+
+local function hf_language_of(code)
+	code = string.lower(code or "")
+	if string.match(code, "^%s*cs") or string.match(code, "^%s*sk") then return "cs" end
+	return "en"
+end
+
+local function hf_start(tag)
+	local env = os.getenv("LC_ALL") or os.getenv("LC_MESSAGES") or os.getenv("LANG")
+	if hf_is_windows() then
+		if vlc.win and vlc.win.console_init then
+			local ok, err = pcall(vlc.win.console_init)
+			if not ok then hf_log(tag, "couldn't create the hidden console: " .. tostring(err)) end
+		end
+		local culture = hf_run(tag, 'powershell -NoProfile -WindowStyle Hidden -Command "(Get-UICulture).Name"')
+		hf_lang = hf_language_of(culture)
+	elseif env and env ~= "" and env ~= "C" and env ~= "POSIX" and not string.match(env, "^C%.") then
+		hf_lang = hf_language_of(env)
+	else
+		-- macOS apps started from the Dock or Finder get no LANG
+		local langs = hf_run(tag, "defaults read -g AppleLanguages 2>/dev/null") or ""
+		hf_lang = hf_language_of(string.match(langs, '"?([%a%-_]+)'))
 	end
-	hf_run(tag, "powershell -NoProfile -WindowStyle Hidden -Command exit")
+	hf_log(tag, "UI language: " .. hf_lang)
 end
 
 local function hf_read(path)
@@ -301,10 +328,10 @@ local function hf_inspect_zip(data)
 end
 
 local function hf_check_download(data)
-	if not data or #data == 0 then return false, "empty response" end
-	if #data > HF_MAX_DOWNLOAD_BYTES then return false, "larger than a subtitle should be" end
+	if not data or #data == 0 then return false, L("empty response", "prázdná odpověď") end
+	if #data > HF_MAX_DOWNLOAD_BYTES then return false, L("larger than a subtitle should be", "soubor je na titulky příliš velký") end
 	local head = string.gsub(string.sub(data, 1, 512), "^\239\187\191", "")
-	if string.match(head, "^%s*<") then return false, "the site returned a web page instead of a subtitle" end
+	if string.match(head, "^%s*<") then return false, L("the site returned a web page instead of a subtitle", "stránka místo titulků vrátila webovou stránku") end
 	return true
 end
 
@@ -389,7 +416,7 @@ local function hf_finish(o)
 	if not ok then
 		hf_log(tag, "download rejected: " .. reason)
 		os.remove(o.body_path)
-		return "Download failed: " .. reason .. ". Try again in a moment."
+		return L("Download failed: %s. Try again in a moment.", "Stažení selhalo: %s. Zkuste to za chvíli znovu.", reason)
 	end
 
 	local work = hf_join(vlc.config.userdatadir(), o.prefix .. "_work")
@@ -407,23 +434,23 @@ local function hf_finish(o)
 		local total, info, encrypted = hf_inspect_zip(data)
 		if not total then
 			hf_log(tag, "zip refused: " .. tostring(info))
-			return done("Downloaded a zip but it looks broken or unsafe (see debug log).")
+			return done(L("Downloaded a zip but it looks broken or unsafe (see debug log).", "ZIP se stáhl, ale vypadá poškozeně nebo nebezpečně (podrobnosti v logu)."))
 		end
 		if total > HF_MAX_EXTRACTED_BYTES then
 			hf_log(tag, "zip refused: " .. total .. " bytes uncompressed")
-			return done("Download refused: the archive is far too large when unpacked.")
+			return done(L("Download refused: the archive is far too large when unpacked.", "Stažení odmítnuto: archiv by byl po rozbalení příliš velký."))
 		end
 		if encrypted and (not o.zip_password or o.zip_password == "") then
 			hf_log(tag, "zip is password-protected and no zip password is set")
-			return done("This zip needs a password - fill in the zip password field, then download again.")
+			return done(L("This zip needs a password - fill in the zip password field, then download again.", "Tento ZIP potřebuje heslo - vyplňte heslo k ZIPu a stáhněte znovu."))
 		end
 		local zip_path = hf_join(work, "download.zip")
 		hf_write(zip_path, data)
 		src = hf_extract(tag, zip_path, hf_join(work, "extract"), o.zip_password, encrypted)
 		if not src then
 			return done(encrypted
-					and "Couldn't unpack the zip - check the zip password (see debug log)."
-					or "Downloaded a zip but found no subtitle inside (see debug log).")
+					and L("Couldn't unpack the zip - check the zip password (see debug log).", "ZIP se nepodařilo rozbalit - zkontrolujte heslo k ZIPu (podrobnosti v logu).")
+					or L("Downloaded a zip but found no subtitle inside (see debug log).", "ZIP se stáhl, ale nejsou v něm žádné titulky (podrobnosti v logu)."))
 		end
 		ext = string.lower(string.match(src, "%.(%w+)$") or "srt")
 	else
@@ -439,21 +466,21 @@ local function hf_finish(o)
 	local content = hf_read(src)
 	if not content or not hf_write(final_path, content) then
 		hf_log(tag, "could not write " .. final_path)
-		return done("Downloaded, but couldn't save into " .. dest_dir .. " (see debug log).")
+		return done(L("Downloaded, but couldn't save into %s (see debug log).", "Staženo, ale nepodařilo se uložit do %s (podrobnosti v logu).", dest_dir))
 	end
 	hf_log(tag, "saved subtitle to " .. final_path)
 
 	if hf_attach(final_path) then
-		return done("Downloaded and applied: " .. final_name)
+		return done(L("Downloaded and applied: %s", "Staženo a načteno: %s", final_name))
 	end
-	return done("Saved to " .. final_path .. " (no video playing, open one and add it manually).")
+	return done(L("Saved to %s (no video playing, open one and add it manually).", "Uloženo do %s (nehraje žádné video, otevřete ho a titulky přidejte ručně).", final_path))
 end
 -- <<< shared block "hf_download"
 
 local warm_up -- assigned further down, after the login helpers it uses
 
 function activate()
-	pcall(hf_quiet_console, "[Edna]")
+	pcall(hf_start, "[Edna]")
 	pcall(hf_cleanup_old, "[Edna]", "edna")
 	show_dialog()
 	local ok, err = pcall(warm_up)
@@ -514,27 +541,27 @@ local function guess_title_from_playing()
 end
 
 function show_dialog()
-	dlg = vlc.dialog("Edna Subtitles v1.1.3")
+	dlg = vlc.dialog("Edna Subtitles v1.2.0")
 	local saved_username, saved_password = load_credentials()
 	local guessed_title = guess_title_from_playing()
 
-	dlg:add_label("Username:", 1, 1, 1, 1)
+	dlg:add_label(L("Username:", "Uživatelské jméno:"), 1, 1, 1, 1)
 	user_input = dlg:add_text_input(saved_username, 2, 1, 3, 1)
-	dlg:add_label("Password:", 1, 2, 1, 1)
+	dlg:add_label(L("Password:", "Heslo:"), 1, 2, 1, 1)
 	pass_input = dlg:add_password(saved_password, 2, 2, 3, 1)
 
-	dlg:add_label("Search:", 1, 3, 1, 1)
+	dlg:add_label(L("Search:", "Hledat:"), 1, 3, 1, 1)
 	search_input = dlg:add_text_input(guessed_title or "", 2, 3, 3, 1)
 
-	dlg:add_button("Search", do_search, 1, 4, 1, 1)
-	dlg:add_button("View Seasons", do_view_seasons, 2, 4, 1, 1)
-	dlg:add_button("View Episodes", do_view_episodes, 3, 4, 1, 1)
-	dlg:add_button("Download Selected", do_download, 4, 4, 1, 1)
+	dlg:add_button(L("Search", "Hledat"), do_search, 1, 4, 1, 1)
+	dlg:add_button(L("View Seasons", "Zobrazit sezóny"), do_view_seasons, 2, 4, 1, 1)
+	dlg:add_button(L("View Episodes", "Zobrazit epizody"), do_view_episodes, 3, 4, 1, 1)
+	dlg:add_button(L("Download Selected", "Stáhnout vybrané"), do_download, 4, 4, 1, 1)
 
 	results_list = dlg:add_list(1, 5, 4, 1)
 	local initial_status = guessed_title
-		and ("Guessed '" .. guessed_title .. "' from the playing file - edit if wrong, then Search.")
-		or "Enter credentials + a show title, then Search."
+		and L("Guessed '%s' from the playing file - edit if wrong, then Search.", "Odhadnutý název „%s“ podle přehrávaného souboru - případně ho upravte a klikněte na Hledat.", guessed_title)
+		or L("Enter credentials + a show title, then Search.", "Zadejte přihlašovací údaje a název seriálu, pak klikněte na Hledat.")
 	initial_status_text = initial_status
 	creds_saved_user, creds_saved_pass = saved_username, saved_password
 	status_label = dlg:add_label(initial_status, 1, 6, 4, 1)
@@ -955,7 +982,7 @@ local function login(username, password)
 	end
 	if remaining > 0 then
 		pcall(function()
-			status_label:set_text("Logging in to Edna (its anti-spam check needs a " .. math.ceil(remaining) .. " s pause)...")
+			status_label:set_text(L("Logging in to Edna (its anti-spam check needs a %s s pause)...", "Přihlašuji se k Edně (její ochrana proti spamu vyžaduje pauzu %s s)...", math.ceil(remaining)))
 			dlg:update()
 		end)
 		vlc.msg.dbg("[Edna] login: waiting " .. string.format("%.1f", remaining) .. " s before submitting (anti-spam form timer)")
@@ -1129,7 +1156,7 @@ end
 -- VLC session, or loads the login form ahead of time so its anti-spam timer
 -- is already running when the user clicks Search (see prepare_login()).
 warm_up = function()
-	status_label:set_text("Connecting to Edna...")
+	status_label:set_text(L("Connecting to Edna...", "Připojuji se k Edně..."))
 	dlg:update()
 	local username = user_input:get_text()
 	if username ~= "" and read_saved_session_user() == username then
@@ -1154,11 +1181,11 @@ function do_search()
 	local query = search_input:get_text()
 
 	if username == "" or password == "" then
-		status_label:set_text("Enter your edna.cz username and password first.")
+		status_label:set_text(L("Enter your edna.cz username and password first.", "Nejdřív zadejte své uživatelské jméno a heslo k edna.cz."))
 		return
 	end
 	if query == "" then
-		status_label:set_text("Type a show title to search for.")
+		status_label:set_text(L("Type a show title to search for.", "Napište název, který chcete hledat."))
 		return
 	end
 
@@ -1167,18 +1194,18 @@ function do_search()
 		creds_saved_user, creds_saved_pass = username, password
 	end
 
-	status_label:set_text("Logging in...")
+	status_label:set_text(L("Logging in...", "Přihlašuji se..."))
 	dlg:update()
 	if not ensure_login(username, password) then
-		status_label:set_text("Login failed (see debug log) - check username/password.")
+		status_label:set_text(L("Login failed (see debug log) - check username/password.", "Přihlášení selhalo (podrobnosti v logu) - zkontrolujte uživatelské jméno a heslo."))
 		return
 	end
 
-	status_label:set_text("Searching...")
+	status_label:set_text(L("Searching...", "Hledám..."))
 	dlg:update()
 	local html = get("https://www.edna.cz/vyhledavani/?q=" .. urlencode(query))
 	if html == nil then
-		status_label:set_text("Search request failed to run (see debug log).")
+		status_label:set_text(L("Search request failed to run (see debug log).", "Hledání se nepodařilo spustit (podrobnosti v logu)."))
 		return
 	end
 
@@ -1192,39 +1219,39 @@ function do_search()
 	current_stage = "search"
 
 	if #shows == 0 then
-		status_label:set_text("No series found for '" .. query .. "' (only TV series are supported, not movies).")
+		status_label:set_text(L("No series found for '%s' (only TV series are supported, not movies).", "Pro „%s“ nebyl nalezen žádný seriál (podporované jsou jen seriály, ne filmy).", query))
 	else
-		status_label:set_text(#shows .. " show(s). Select one, then click 'View Seasons'.")
+		status_label:set_text(L("%s show(s). Select one, then click 'View Seasons'.", "Nalezené seriály: %s. Vyberte jeden a klikněte na „Zobrazit sezóny“.", #shows))
 	end
 end
 
 function do_view_seasons()
 	if current_stage ~= "search" then
-		status_label:set_text("Search first, then select a show from the list.")
+		status_label:set_text(L("Search first, then select a show from the list.", "Nejdřív vyhledávejte, pak vyberte anime ze seznamu."))
 		return
 	end
 	local sel = results_list:get_selection()
 	local idx = nil
 	for id, _ in pairs(sel) do idx = id break end
 	if idx == nil or shows[idx] == nil then
-		status_label:set_text("Select a show from the list first.")
+		status_label:set_text(L("Select a show from the list first.", "Nejdřív vyberte pořad ze seznamu."))
 		return
 	end
 	current_show = shows[idx]
 
-	status_label:set_text("Loading season list...")
+	status_label:set_text(L("Loading season list...", "Načítám seznam sezón..."))
 	dlg:update()
 
 	local username = user_input:get_text()
 	local password = pass_input:get_text()
 	if not ensure_login(username, password) then
-		status_label:set_text("Login failed - can't load the Titulky tab (see debug log).")
+		status_label:set_text(L("Login failed - can't load the Titulky tab (see debug log).", "Přihlášení selhalo - nelze načíst záložku Titulky (podrobnosti v logu)."))
 		return
 	end
 
 	local html = get_logged_in("https://www.edna.cz" .. current_show.path .. "titulky/?season=1", username, password)
 	if html == nil then
-		status_label:set_text("Request failed to run (see debug log).")
+		status_label:set_text(L("Request failed to run (see debug log).", "Požadavek se nepodařilo spustit (podrobnosti v logu)."))
 		return
 	end
 
@@ -1232,44 +1259,44 @@ function do_view_seasons()
 
 	results_list:clear()
 	for i, se in ipairs(seasons) do
-		results_list:add_value("Sezóna " .. se.season, i)
+		results_list:add_value(L("Season %s", "Sezóna %s", se.season), i)
 	end
 	current_stage = "seasons"
 
 	if #seasons == 0 then
-		status_label:set_text("No seasons found for '" .. current_show.title .. "' (see debug log).")
+		status_label:set_text(L("No seasons found for '%s' (see debug log).", "Pro „%s“ nebyly nalezeny žádné sezóny (podrobnosti v logu).", current_show.title))
 	else
-		status_label:set_text(#seasons .. " season(s) for '" .. current_show.title .. "'. Select one, then View Episodes.")
+		status_label:set_text(L("%s season(s) for '%s'. Select one, then View Episodes.", "Nalezené sezóny (%s) pro „%s“. Vyberte jednu a klikněte na Zobrazit epizody.", #seasons, current_show.title))
 	end
 end
 
 function do_view_episodes()
 	if current_stage ~= "seasons" then
-		status_label:set_text("View seasons first, then select one from the list.")
+		status_label:set_text(L("View seasons first, then select one from the list.", "Nejdřív zobrazte sezóny, pak jednu vyberte ze seznamu."))
 		return
 	end
 	local sel = results_list:get_selection()
 	local idx = nil
 	for id, _ in pairs(sel) do idx = id break end
 	if idx == nil or seasons[idx] == nil then
-		status_label:set_text("Select a season from the list first.")
+		status_label:set_text(L("Select a season from the list first.", "Nejdřív vyberte sezónu ze seznamu."))
 		return
 	end
 	current_season = seasons[idx].season
 
-	status_label:set_text("Loading episode list...")
+	status_label:set_text(L("Loading episode list...", "Načítám seznam epizod..."))
 	dlg:update()
 
 	local username = user_input:get_text()
 	local password = pass_input:get_text()
 	if not ensure_login(username, password) then
-		status_label:set_text("Login failed - can't load the episode list (see debug log).")
+		status_label:set_text(L("Login failed - can't load the episode list (see debug log).", "Přihlášení selhalo - nelze načíst seznam epizod (podrobnosti v logu)."))
 		return
 	end
 
 	local html = get_logged_in("https://www.edna.cz" .. current_show.path .. "titulky/?season=" .. tostring(current_season), username, password)
 	if html == nil then
-		status_label:set_text("Request failed to run (see debug log).")
+		status_label:set_text(L("Request failed to run (see debug log).", "Požadavek se nepodařilo spustit (podrobnosti v logu)."))
 		return
 	end
 
@@ -1277,49 +1304,49 @@ function do_view_episodes()
 
 	results_list:clear()
 	for i, e in ipairs(episodes) do
-		local prefix = e.internal and "" or "EXTERNAL - "
+		local prefix = e.internal and "" or L("EXTERNAL - ", "EXTERNÍ - ")
 		results_list:add_value(prefix .. e.ep_label .. " [" .. string.upper(e.lang) .. "]", i)
 	end
 	current_stage = "episodes"
 
 	if #episodes == 0 then
-		status_label:set_text("No subtitle flags found for season " .. current_season .. " (see debug log).")
+		status_label:set_text(L("No subtitle flags found for season %s (see debug log).", "Pro %s. sezónu nebyly nalezeny žádné titulky (podrobnosti v logu).", current_season))
 	else
-		status_label:set_text(#episodes .. " subtitle(s) for season " .. current_season .. ". Select one, then Download.")
+		status_label:set_text(L("%s subtitle(s) for season %s. Select one, then Download.", "Nalezené titulky (%s) pro %s. sezónu. Vyberte jedny a klikněte na Stáhnout.", #episodes, current_season))
 	end
 end
 
 function do_download()
 	if current_stage ~= "episodes" then
-		status_label:set_text("View episodes first, then select a subtitle to download.")
+		status_label:set_text(L("View episodes first, then select a subtitle to download.", "Nejdřív zobrazte epizody, pak vyberte titulky ke stažení."))
 		return
 	end
 	local sel = results_list:get_selection()
 	local idx = nil
 	for id, _ in pairs(sel) do idx = id break end
 	if idx == nil or episodes[idx] == nil then
-		status_label:set_text("Select a subtitle from the list first.")
+		status_label:set_text(L("Select a subtitle from the list first.", "Nejdřív vyberte titulky ze seznamu."))
 		return
 	end
 	local row = episodes[idx]
 
 	if not row.internal then
 		if copy_to_clipboard(row.href) then
-			status_label:set_text("External subtitle (titulky.com) - link copied to the clipboard.")
+			status_label:set_text(L("External subtitle (titulky.com) - link copied to the clipboard.", "Externí titulky (titulky.com) - odkaz je zkopírovaný do schránky."))
 		else
 			search_input:set_text(row.href)
-			status_label:set_text("External subtitle - clipboard copy failed, link put in the search box instead.")
+			status_label:set_text(L("External subtitle - clipboard copy failed, link put in the search box instead.", "Externí titulky - kopírování do schránky selhalo, odkaz je místo toho v poli Hledat."))
 		end
 		return
 	end
 
-	status_label:set_text("Downloading...")
+	status_label:set_text(L("Downloading...", "Stahuji..."))
 	dlg:update()
 
 	local username = user_input:get_text()
 	local password = pass_input:get_text()
 	if not ensure_login(username, password) then
-		status_label:set_text("Login failed - can't download (see debug log).")
+		status_label:set_text(L("Login failed - can't download (see debug log).", "Přihlášení selhalo - nelze stahovat (podrobnosti v logu)."))
 		return
 	end
 
@@ -1338,7 +1365,7 @@ function do_download()
 	)
 	local out, err = run(cmd)
 	if out == nil then
-		status_label:set_text("curl did not run: " .. tostring(err))
+		status_label:set_text(L("curl did not run: %s", "curl se nepodařilo spustit: %s", tostring(err)))
 		return
 	end
 
@@ -1351,7 +1378,7 @@ function do_download()
 	if bf then bf:close() end
 
 	if body_sample == nil or body_sample == "" then
-		status_label:set_text("Download failed - empty response (see debug log). Try again in a moment.")
+		status_label:set_text(L("Download failed - empty response (see debug log). Try again in a moment.", "Stažení selhalo - prázdná odpověď (podrobnosti v logu). Zkuste to za chvíli znovu."))
 		vlc.msg.dbg("[Edna] download got empty body for " .. row.ep_label .. " [" .. row.lang .. "]")
 		return
 	end
@@ -1365,13 +1392,14 @@ function do_download()
 		ext = ".ass"
 	end
 	os.remove(header_file)
+	local was_page = hf_looks_like_page(body_file)
 	local result_text = hf_finish({
 		tag = "[Edna]", prefix = "edna", body_path = body_file, ext = ext,
 		name_stem = "edna_" .. string.gsub(row.ep_label, "[^%w]+", "_") .. "_" .. row.lang,
 	})
-	if string.find(result_text, "web page", 1, true) then
+	if was_page then
 		session_user = nil -- probably logged out: the next click logs in fresh
-		result_text = result_text .. " If this keeps happening, click Search again to log in fresh."
+		result_text = result_text .. L(" If this keeps happening, click Search again to log in fresh.", " Pokud se to opakuje, klikněte znovu na Hledat a přihlaste se znovu.")
 	end
 	status_label:set_text(result_text)
 end

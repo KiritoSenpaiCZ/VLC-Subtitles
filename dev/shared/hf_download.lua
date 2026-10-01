@@ -72,14 +72,41 @@ end
 -- makes later tools run inside it instead: at most one short flash when
 -- the extension opens, none after that. Calling this again (or from
 -- another extension) is harmless: the console already exists.
-local function hf_quiet_console(tag)
-	if not hf_is_windows() or not (vlc.win and vlc.win.console_init) then return end
-	local ok, err = pcall(vlc.win.console_init)
-	if not ok then
-		hf_log(tag, "couldn't create the hidden console: " .. tostring(err))
-		return
+-- The same PowerShell call also reports the Windows display language.
+--
+-- The UI is in Czech when the system language is Czech or Slovak, and in
+-- English otherwise. hf_start runs both when the extension opens.
+local hf_lang = "en"
+
+-- L("english", "czech", ...): the text for the UI language, with %s
+-- placeholders filled in like string.format
+local function L(en, cs, ...)
+	return string.format((hf_lang == "cs") and cs or en, ...)
+end
+
+local function hf_language_of(code)
+	code = string.lower(code or "")
+	if string.match(code, "^%s*cs") or string.match(code, "^%s*sk") then return "cs" end
+	return "en"
+end
+
+local function hf_start(tag)
+	local env = os.getenv("LC_ALL") or os.getenv("LC_MESSAGES") or os.getenv("LANG")
+	if hf_is_windows() then
+		if vlc.win and vlc.win.console_init then
+			local ok, err = pcall(vlc.win.console_init)
+			if not ok then hf_log(tag, "couldn't create the hidden console: " .. tostring(err)) end
+		end
+		local culture = hf_run(tag, 'powershell -NoProfile -WindowStyle Hidden -Command "(Get-UICulture).Name"')
+		hf_lang = hf_language_of(culture)
+	elseif env and env ~= "" and env ~= "C" and env ~= "POSIX" and not string.match(env, "^C%.") then
+		hf_lang = hf_language_of(env)
+	else
+		-- macOS apps started from the Dock or Finder get no LANG
+		local langs = hf_run(tag, "defaults read -g AppleLanguages 2>/dev/null") or ""
+		hf_lang = hf_language_of(string.match(langs, '"?([%a%-_]+)'))
 	end
-	hf_run(tag, "powershell -NoProfile -WindowStyle Hidden -Command exit")
+	hf_log(tag, "UI language: " .. hf_lang)
 end
 
 local function hf_read(path)
@@ -246,10 +273,10 @@ local function hf_inspect_zip(data)
 end
 
 local function hf_check_download(data)
-	if not data or #data == 0 then return false, "empty response" end
-	if #data > HF_MAX_DOWNLOAD_BYTES then return false, "larger than a subtitle should be" end
+	if not data or #data == 0 then return false, L("empty response", "prázdná odpověď") end
+	if #data > HF_MAX_DOWNLOAD_BYTES then return false, L("larger than a subtitle should be", "soubor je na titulky příliš velký") end
 	local head = string.gsub(string.sub(data, 1, 512), "^\239\187\191", "")
-	if string.match(head, "^%s*<") then return false, "the site returned a web page instead of a subtitle" end
+	if string.match(head, "^%s*<") then return false, L("the site returned a web page instead of a subtitle", "stránka místo titulků vrátila webovou stránku") end
 	return true
 end
 
@@ -334,7 +361,7 @@ local function hf_finish(o)
 	if not ok then
 		hf_log(tag, "download rejected: " .. reason)
 		os.remove(o.body_path)
-		return "Download failed: " .. reason .. ". Try again in a moment."
+		return L("Download failed: %s. Try again in a moment.", "Stažení selhalo: %s. Zkuste to za chvíli znovu.", reason)
 	end
 
 	local work = hf_join(vlc.config.userdatadir(), o.prefix .. "_work")
@@ -352,23 +379,23 @@ local function hf_finish(o)
 		local total, info, encrypted = hf_inspect_zip(data)
 		if not total then
 			hf_log(tag, "zip refused: " .. tostring(info))
-			return done("Downloaded a zip but it looks broken or unsafe (see debug log).")
+			return done(L("Downloaded a zip but it looks broken or unsafe (see debug log).", "ZIP se stáhl, ale vypadá poškozeně nebo nebezpečně (podrobnosti v logu)."))
 		end
 		if total > HF_MAX_EXTRACTED_BYTES then
 			hf_log(tag, "zip refused: " .. total .. " bytes uncompressed")
-			return done("Download refused: the archive is far too large when unpacked.")
+			return done(L("Download refused: the archive is far too large when unpacked.", "Stažení odmítnuto: archiv by byl po rozbalení příliš velký."))
 		end
 		if encrypted and (not o.zip_password or o.zip_password == "") then
 			hf_log(tag, "zip is password-protected and no zip password is set")
-			return done("This zip needs a password - fill in the zip password field, then download again.")
+			return done(L("This zip needs a password - fill in the zip password field, then download again.", "Tento ZIP potřebuje heslo - vyplňte heslo k ZIPu a stáhněte znovu."))
 		end
 		local zip_path = hf_join(work, "download.zip")
 		hf_write(zip_path, data)
 		src = hf_extract(tag, zip_path, hf_join(work, "extract"), o.zip_password, encrypted)
 		if not src then
 			return done(encrypted
-					and "Couldn't unpack the zip - check the zip password (see debug log)."
-					or "Downloaded a zip but found no subtitle inside (see debug log).")
+					and L("Couldn't unpack the zip - check the zip password (see debug log).", "ZIP se nepodařilo rozbalit - zkontrolujte heslo k ZIPu (podrobnosti v logu).")
+					or L("Downloaded a zip but found no subtitle inside (see debug log).", "ZIP se stáhl, ale nejsou v něm žádné titulky (podrobnosti v logu)."))
 		end
 		ext = string.lower(string.match(src, "%.(%w+)$") or "srt")
 	else
@@ -384,12 +411,12 @@ local function hf_finish(o)
 	local content = hf_read(src)
 	if not content or not hf_write(final_path, content) then
 		hf_log(tag, "could not write " .. final_path)
-		return done("Downloaded, but couldn't save into " .. dest_dir .. " (see debug log).")
+		return done(L("Downloaded, but couldn't save into %s (see debug log).", "Staženo, ale nepodařilo se uložit do %s (podrobnosti v logu).", dest_dir))
 	end
 	hf_log(tag, "saved subtitle to " .. final_path)
 
 	if hf_attach(final_path) then
-		return done("Downloaded and applied: " .. final_name)
+		return done(L("Downloaded and applied: %s", "Staženo a načteno: %s", final_name))
 	end
-	return done("Saved to " .. final_path .. " (no video playing, open one and add it manually).")
+	return done(L("Saved to %s (no video playing, open one and add it manually).", "Uloženo do %s (nehraje žádné video, otevřete ho a titulky přidejte ručně).", final_path))
 end

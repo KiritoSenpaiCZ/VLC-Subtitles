@@ -41,14 +41,41 @@ end
 -- makes later tools run inside it instead: at most one short flash when
 -- the extension opens, none after that. Calling this again (or from
 -- another extension) is harmless: the console already exists.
-local function quiet_console()
-	if not is_windows() or not (vlc.win and vlc.win.console_init) then return end
-	local ok, err = pcall(vlc.win.console_init)
-	if not ok then
-		log("couldn't create the hidden console: " .. tostring(err))
-		return
+-- The same PowerShell call also reports the Windows display language.
+--
+-- The UI is in Czech when the system language is Czech or Slovak, and in
+-- English otherwise. start_extension runs both when the extension opens.
+local ui_lang = "en"
+
+-- L("english", "czech", ...): the text for the UI language, with %s
+-- placeholders filled in like string.format
+local function L(en, cs, ...)
+	return string.format((ui_lang == "cs") and cs or en, ...)
+end
+
+local function language_of(code)
+	code = string.lower(code or "")
+	if string.match(code, "^%s*cs") or string.match(code, "^%s*sk") then return "cs" end
+	return "en"
+end
+
+local function start_extension()
+	local env = os.getenv("LC_ALL") or os.getenv("LC_MESSAGES") or os.getenv("LANG")
+	if is_windows() then
+		if vlc.win and vlc.win.console_init then
+			local ok, err = pcall(vlc.win.console_init)
+			if not ok then log("couldn't create the hidden console: " .. tostring(err)) end
+		end
+		local culture = run('powershell -NoProfile -WindowStyle Hidden -Command "(Get-UICulture).Name"')
+		ui_lang = language_of(culture)
+	elseif env and env ~= "" and env ~= "C" and env ~= "POSIX" and not string.match(env, "^C%.") then
+		ui_lang = language_of(env)
+	else
+		-- macOS apps started from the Dock or Finder get no LANG
+		local langs = run("defaults read -g AppleLanguages 2>/dev/null") or ""
+		ui_lang = language_of(string.match(langs, '"?([%a%-_]+)'))
 	end
-	run("powershell -NoProfile -WindowStyle Hidden -Command exit")
+	log("UI language: " .. ui_lang)
 end
 
 local function read_file(path)

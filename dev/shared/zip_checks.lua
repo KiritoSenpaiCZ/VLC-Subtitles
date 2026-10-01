@@ -51,10 +51,10 @@ end
 
 -- Returns (ok, reason). Rejects empty, oversized and HTML responses.
 local function check_download(data)
-	if not data or #data == 0 then return false, "empty response" end
-	if #data > MAX_DOWNLOAD_BYTES then return false, "larger than expected (" .. #data .. " bytes)" end
+	if not data or #data == 0 then return false, L("empty response", "prázdná odpověď") end
+	if #data > MAX_DOWNLOAD_BYTES then return false, L("larger than expected (%s bytes)", "soubor je větší, než by měl být (%s bajtů)", #data) end
 	local head = string.gsub(string.sub(data, 1, 512), "^\239\187\191", "") -- drop UTF-8 BOM
-	if string.match(head, "^%s*<") then return false, "the site returned a web page instead of a subtitle" end
+	if string.match(head, "^%s*<") then return false, L("the site returned a web page instead of a subtitle", "stránka místo titulků vrátila webovou stránku") end
 	return true
 end
 
