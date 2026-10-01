@@ -1,36 +1,23 @@
 --[[
-Edna.cz Subtitle Downloader - VLC Extension
-Same idea as hiyori.lua/wosir.lua: search a show, drill into a season,
-browse its episode list, download a subtitle (or show the link if it's
-an external/forwarded one to titulky.com), and load it into whatever's
-currently playing.
+Edna.cz Subtitles - VLC extension
 
-Edna specifics vs Hiyori/WoSir:
-- Edna is a general TV/movie site, not an anime catalog - it has a real
-  show -> season -> episode hierarchy, so this extension has one more
-  drill-down stage than the other two (search -> seasons -> episodes).
-- The ENTIRE "Titulky" tab (season/episode listing, not just the actual
-  download) requires being logged in - confirmed live: visiting it while
-  logged out redirects straight to the login page.
-- Login is a Nette-framework form (same style as wosir.cz's CSRF dance):
-  a hidden "form_created" timestamp has to be scraped from a fresh GET of
-  the login page first, and there's a "spam" honeypot field that must be
-  left empty.
-- Each episode can have 0, 1 or 2 flags (Czech/Slovak), completely
-  independent of each other - either flag can point to an edna.cz-hosted
-  page (internal) or straight out to titulky.com (external). Language is
-  read from the flag's own icon class ("flag-cz"/"flag-sk"), not from the
-  internal/external distinction.
-- The internal per-episode page shows a "should auto-download, click here
-  if not" message with a "?direct=1" fallback link - that's the real
-  file. The response can come back as either a raw .srt/.ass or a .zip,
-  so the download step sniffs the response and handles either case.
-- External subs: same approach as Hiyori - marked EXTERNAL, copied to
-  the clipboard, never auto-downloaded.
+Search a show, pick a season and an episode, download the subtitle and
+load it into whatever is playing.
 
-Manual search only for now (matches Hiyori/WoSir's current scope).
-Logs in fresh on every request (no session caching), same tradeoff as
-the other extensions made: simplicity over performance.
+Site notes:
+- edna.cz has a show -> season -> episode hierarchy, and the whole
+  season/episode listing requires being logged in.
+- Login is a Nette form: a hidden "form_created" anti-spam token must come
+  from a fresh GET of the login page, the "spam" honeypot field must be
+  sent empty, and the form must not be submitted too soon (see login()).
+- Each episode can have 0, 1 or 2 flags (Czech/Slovak), each pointing either
+  to an edna.cz page (internal) or straight to titulky.com (external).
+  The language comes from the flag's icon class ("flag-cz"/"flag-sk").
+- An internal page's real file is its "?direct=1" link. It can be a raw
+  .srt/.ass or a .zip, so the download step handles both.
+- External subtitles are marked EXTERNAL and their link is copied to the
+  clipboard; they are never downloaded.
+- Whole-season bulk download is deliberately not supported.
 ]]
 
 function descriptor()
@@ -61,17 +48,14 @@ local episodes = {}  -- [n] = {ep_label=, lang=, href=, internal=(bool)}
 local current_show = nil
 local current_season = nil
 
--- credential storage: see the block below is_windows()/downloads_dir(),
--- after the helpers it needs exist.
+-- defined in the credentials section further down, after the helpers
+-- they need
 local save_credentials, load_credentials
 
---[[ ---------------- shared download handling (v1.1) ----------------
-Same block in every Highflight VLC extension that predates v1.1 (Hiyori,
-WoSir, Edna, Kamui, Titulky), ported from the tested code of the newer
-ones (Legie Kondor, NyaSub, Hanabi). Everything is prefixed hf_ so it
-can't clash with the file's own helpers. Only local function definitions
-here: VLC's startup scan provides almost no standard Lua functions, so
-nothing may be called at a file's top level.
+--[[ ---------------- download handling ----------------
+Everything here is prefixed hf_ so it can't clash with the rest of the
+file. Only local function definitions: VLC's startup scan provides almost
+no standard Lua functions, so nothing may be called at a file's top level.
 
 What it does once a file has been downloaded (hf_finish):
   - rejects empty responses, HTML pages and anything over
@@ -395,7 +379,7 @@ function close()
 end
 
 -- best-effort guess at a show title from the currently playing file,
--- so the search box starts pre-filled (same helper as hiyori.lua/wosir.lua)
+-- so the search box starts pre-filled
 local function guess_title_from_playing()
 	if not (vlc.input and vlc.input.item) then return nil end
 	local ok, item = pcall(vlc.input.item)
@@ -615,12 +599,9 @@ local function extract_attr(attr_str, name)
 end
 
 --[[ ---------------- credentials ----------------
-Same approach as the other three extensions (see wosir.lua's own comment
-here for the full reasoning) - username in a small plain-text file,
-password never written to disk in plain text: macOS Keychain via the
-`security` CLI, or on Windows, DPAPI via a short-lived PowerShell temp
-script. Edna is new, so there's no legacy plain-text file to migrate.
-Not tested live yet on either OS.
+Username in a small plain-text file. The password is never written to
+disk in plain text: macOS Keychain via the `security` CLI, or on Windows,
+DPAPI via a short-lived PowerShell temp script.
 ]]
 
 local function username_file()
@@ -721,23 +702,14 @@ load_credentials = function()
 	return username, password
 end
 
--- fresh login, returns true/false. Always starts from an empty cookie
--- jar for the same reason as wosir.lua: the login page's "form_created"
--- token needs to come from a real, freshly-rendered login form.
 -- reads the cookie jar file (Netscape format) and returns a count plus
 -- the cookie names found (not values - values can be session secrets).
 -- Used purely for diagnostics: if this comes back empty after the login
 -- page GET, curl isn't even getting a session cookie from the server,
 -- which would point at something other than username/password/token
 -- being wrong (e.g. a bot-detection layer curl doesn't satisfy).
--- v0.8: found the bug that made this always report empty, every single
--- time, in every debug log so far. curl marks HttpOnly cookies in the jar
--- file with a literal "#HttpOnly_" prefix on the domain field - that's a
--- real curl convention for preserving the flag on disk, NOT a comment
--- line. Both of edna.cz's cookies are HttpOnly, so this function's own
--- "skip lines starting with #" comment filter was throwing away every
--- real cookie it ever saw. The cookies were fine the whole time; this
--- diagnostic was just lying about it.
+-- Note: curl writes HttpOnly cookies (both of edna.cz's are) with a
+-- "#HttpOnly_" prefix. Those lines are real cookies, not comments.
 local function jar_cookie_names()
 	local f = io.open(cookie_jar(), "r")
 	if not f then return {} end
@@ -770,9 +742,8 @@ local function extract_form_fields(form_html)
 	return fields
 end
 
--- Login reuse (v1.1.0): logging in now costs a 6 s anti-spam pause, and
--- doing that on every click kept VLC blocked for ~10 s per step (the
--- Windows test crashed VLC right after the first step). So: log in once,
+-- Login reuse: a login costs a 6 s anti-spam pause, and a step that blocks
+-- VLC for ~10 s makes VLC 3 hang on Windows. So: log in once,
 -- keep the cookie jar, and only log in again if a page comes back without
 -- the logout link that every logged-in edna.cz page has.
 local session_user = nil
@@ -800,10 +771,10 @@ end
 
 -- Edna's login form has an anti-spam timer (see login() below): it must not
 -- be submitted until several seconds after it was loaded. A step that takes
--- ~10 s makes VLC 3 hang on Windows (seen live: the step finished fine, then
--- VLC froze), so the form is loaded ahead of time - when the dialog opens -
--- and the timer runs while the user reads/types. login() then only waits for
--- whatever is left of the delay, usually nothing.
+-- ~10 s makes VLC 3 hang on Windows, so the form is loaded ahead of time,
+-- when the dialog opens, and the timer runs while the user reads/types.
+-- login() then only waits for whatever is left of the delay, usually
+-- nothing.
 local LOGIN_FORM_DELAY = 6        -- seconds the form must "age" before submit
 local PREPARED_MAX_AGE = 15 * 60  -- reload a prepared form older than this
 local prepared = nil              -- { form_created =, at = os.time() }
@@ -888,8 +859,8 @@ local function login(username, password)
 	-- Edna's login form uses the Nette AntiSpam add-on: form_created encodes
 	-- when the form was rendered (9999999999 minus the unix time, digits
 	-- written as letters a-j), and a form submitted only moments later is
-	-- rejected as a bot ("Byl detekovan pokus o spam" - seen live from
-	-- Windows VLC, 2026-10-01). So wait like a person filling it in would.
+	-- rejected as a bot ("Byl detekovan pokus o spam"). So wait like a
+	-- person filling it in would.
 	-- A fixed wait rather than one computed from the token, so a PC clock
 	-- that's off can't break it.
 	-- precise when VLC's clock is available; otherwise whole seconds (+1
@@ -934,8 +905,7 @@ local function login(username, password)
 	end
 	vlc.msg.dbg("[Edna] login " .. (ok and "succeeded" or "failed") .. " (response " .. #result .. " bytes, login page was " .. #login_page .. " bytes)")
 	if not ok then
-		-- diagnostics for next time, not blind guessing: is the login
-		-- form still present (meaning we bounced back to the login page,
+		-- diagnostics: is the login form still present (meaning we bounced back to the login page,
 		-- likely a rejected token or wrong credentials), and does the
 		-- page contain any obvious Czech error text?
 		local still_login_form = string.find(result, "loginForm%-submit") ~= nil
@@ -949,8 +919,7 @@ local function login(username, password)
 				vlc.msg.dbg("[Edna] login failure text near '" .. needle .. "': " .. string.sub(result, math.max(1, pos - 60), pos + 60))
 			end
 		end
-		-- v0.8: rather than keep guessing which word the site uses, find
-		-- the first byte where the POST response actually diverges from
+		-- find the first byte where the POST response actually diverges from
 		-- the plain GET of the same page - whatever got inserted/changed
 		-- (almost certainly the real error message) shows up right there,
 		-- regardless of what language or wording it uses.
@@ -1272,8 +1241,7 @@ function do_download()
 
 	-- row.href is the episode's titulky page (with a "#content" fragment
 	-- that's only meaningful in a browser) - the real file is that same
-	-- page's "?direct=1" fallback link, confirmed live to trigger a
-	-- genuine file download in a real browser.
+	-- page's "?direct=1" fallback link.
 	local direct_url = string.gsub(row.href, "#.*$", "") .. "?direct=1"
 
 	local userdir = vlc.config.userdatadir()

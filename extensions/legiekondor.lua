@@ -1,13 +1,11 @@
 --[[
-Legie Kondor (anime4.legiekondor.cz) Subtitle Downloader - VLC Extension
+Legie Kondor (anime4.legiekondor.cz) Subtitles - VLC extension
 
-Same shell-out-to-curl architecture as the other VLC extensions in this
-family (VLC's Lua HTTP API is too limited, so every request goes through
-the system curl via io.popen). No login, no cookies, no credentials: the
+VLC's Lua HTTP API is too limited, so every request goes through the
+system curl via io.popen. No login, no cookies, no credentials: the
 whole site is public.
 
-Site logic ported from the Kodi addon (service.subtitles.legiekondor),
-where it was confirmed live:
+Site notes:
   - The catalog lives at /p/vypis/. Anime titles there are baked into
     cover images, so each card only gives a slug, via
     onclick="window.location.href='/a/<slug>/'". The real title comes
@@ -22,7 +20,7 @@ The catalog (slug -> title) takes one request per anime to build, so it
 is cached for 24h in VLC's own data folder. All titles are fetched with
 a single curl call (one command window flash on Windows, not ~25).
 
-Safety and housekeeping (same rules as the Kodi addons' 1.1.x updates):
+Safety and housekeeping:
   - Downloads are rejected if empty, if they look like an HTML page, or if
     they're over MAX_DOWNLOAD_BYTES.
   - Zips are checked before extracting: total uncompressed size (zip-bomb
@@ -74,7 +72,7 @@ local current_show = nil
 --[[ ---------------- platform helpers ---------------- ]]
 
 -- VLC doesn't provide the standard "package" table while it scans
--- extensions at startup (confirmed from a Windows VLC 3 log), so this must
+-- extensions at startup, so this must
 -- not rely on it, and nothing may call it at load time - only from inside
 -- functions that run after the dialog opens.
 local windows_cached = nil
@@ -98,7 +96,7 @@ local function log(msg)
 end
 
 -- log_line, if given, is logged instead of cmd (keeps secrets out of the
--- debug log - nothing secret here, but same helper as the other extensions)
+-- debug log)
 local function run(cmd, log_line)
 	log("running: " .. (log_line or cmd))
 	local p = io.popen(cmd, "r")
@@ -274,7 +272,7 @@ local function pattern_escape(s)
 end
 
 -- best-effort guess at a show title from the currently playing file, so
--- the search box starts pre-filled (same helper as the other extensions)
+-- the search box starts pre-filled
 local function guess_title_from_playing()
 	if not (vlc.input and vlc.input.item) then return nil end
 	local ok, item = pcall(vlc.input.item)

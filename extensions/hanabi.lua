@@ -1,17 +1,14 @@
 --[[
-Hanabi (hanabi.fan) Subtitle Downloader - VLC Extension
+Hanabi (hanabi.fan) Subtitles - VLC extension
 
-Unlike the other extensions in this family, this one doesn't scrape web
-pages: it uses Hanabi's own official REST API
-(https://hanabi.fan/wp-json/hanabi/v1), which the site's owner built and
-published so tools like this can integrate. Logic ported from the Kodi
-addon (service.subtitles.hanabi 1.1.x), which implements the API
-maintainer's own review feedback.
+Uses Hanabi's official REST API (https://hanabi.fan/wp-json/hanabi/v1),
+which the site publishes so tools like this can integrate. No web page
+scraping.
 
 Auth: a personal access token, created at hanabi.fan under account
 settings -> "Pristupovy token", entered once in this extension's Token
-field. It is stored like the other extensions store passwords (macOS
-Keychain / Windows DPAPI-encrypted file), never in plain text. It is sent
+field. It is stored in the macOS Keychain or a Windows DPAPI-encrypted
+file, never in plain text. It is sent
 to curl through a short-lived header file (curl -H @file) rather than on
 the command line, so it never appears in the debug log or a process list,
 and is never put in a URL.
@@ -31,7 +28,7 @@ a longer one is reported instead of freezing VLC.
 
 Downloads: the API serves an existing ZIP from storage (worst case about
 30 s server-side, normally instant), capped at 50 MB by the API itself.
-Safety rules as in the Kodi addon: size cap, must really be a ZIP, zip-bomb
+Safety checks: size cap, must really be a ZIP, zip-bomb
 guard and unsafe-path check before extracting. A whole-season pack is
 handled by picking the file that matches the Episode field.
 
@@ -88,7 +85,7 @@ local set_status -- assigned in the dialog section, used by the API code
 --[[ ---------------- platform helpers ---------------- ]]
 
 -- VLC doesn't provide the standard "package" table while it scans
--- extensions at startup (confirmed from a Windows VLC 3 log), so this must
+-- extensions at startup, so this must
 -- not rely on it, and nothing may call it at load time - only from inside
 -- functions that run after the dialog opens.
 local windows_cached = nil
@@ -112,7 +109,7 @@ local function log(msg)
 end
 
 -- log_line, if given, is logged instead of cmd (keeps secrets out of the
--- debug log - nothing secret here, but same helper as the other extensions)
+-- debug log)
 local function run(cmd, log_line)
 	log("running: " .. (log_line or cmd))
 	local p = io.popen(cmd, "r")
@@ -284,7 +281,7 @@ local function pattern_escape(s)
 end
 
 -- best-effort guess at a show title from the currently playing file, so
--- the search box starts pre-filled (same helper as the other extensions)
+-- the search box starts pre-filled
 local function guess_title_from_playing()
 	if not (vlc.input and vlc.input.item) then return nil end
 	local ok, item = pcall(vlc.input.item)
@@ -486,7 +483,6 @@ local function num_str(v)
 end
 
 --[[ ---------------- token storage ----------------
-Same secure-storage approach the other extensions use for passwords:
 macOS Keychain via the `security` CLI, Windows DPAPI via a short-lived
 PowerShell script (the encrypted blob can only be decrypted by the same
 Windows user).

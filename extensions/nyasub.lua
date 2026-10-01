@@ -1,18 +1,16 @@
 --[[
-NyaSub (nyasub.cz) Subtitle Downloader - VLC Extension
+NyaSub (nyasub.cz) Subtitles - VLC extension
 
-Same shell-out-to-curl architecture as the other VLC extensions in this
-family (VLC's Lua HTTP API is too limited, so every request goes through
-the system curl via io.popen). No login, no cookies, no credentials: the
+VLC's Lua HTTP API is too limited, so every request goes through the
+system curl via io.popen. No login, no cookies, no credentials: the
 whole site (a public WordPress blog using the WPDM download plugin) is
 browsable and downloadable without an account.
 
-Site logic ported from the Kodi addon (service.subtitles.nyasub), where it
-was confirmed live:
+Site notes:
   - The catalog lives at /hotove-preklady/: every anime is an <h2>
     heading followed by one or more links to that title's season / movie /
     OVA pages (labelled "1.serie", "2.serie", "cast prvni", a film name...).
-    This extension lists one row per such page, like VLC-Kamui does.
+    This extension lists one row per such page.
   - A season page lists its episodes through the WPDM plugin. Each
     episode's "Titulky" button is a plain, pre-rendered
     <a href="...?wpdmdl=<id>&masterkey=<key>"> in on-screen order, so
@@ -25,7 +23,7 @@ was confirmed live:
 
 The catalog is one page, cached for 24h in VLC's own data folder.
 
-Safety and housekeeping (same rules as the Kodi addons' 1.1.x updates):
+Safety and housekeeping:
   - Downloads are rejected if empty, if they look like an HTML page, or if
     they're over MAX_DOWNLOAD_BYTES.
   - Zips are checked before extracting: total uncompressed size (zip-bomb
@@ -80,7 +78,7 @@ local current_page = nil
 --[[ ---------------- platform helpers ---------------- ]]
 
 -- VLC doesn't provide the standard "package" table while it scans
--- extensions at startup (confirmed from a Windows VLC 3 log), so this must
+-- extensions at startup, so this must
 -- not rely on it, and nothing may call it at load time - only from inside
 -- functions that run after the dialog opens.
 local windows_cached = nil
@@ -104,7 +102,7 @@ local function log(msg)
 end
 
 -- log_line, if given, is logged instead of cmd (keeps secrets out of the
--- debug log - nothing secret here, but same helper as the other extensions)
+-- debug log)
 local function run(cmd, log_line)
 	log("running: " .. (log_line or cmd))
 	local p = io.popen(cmd, "r")
@@ -280,7 +278,7 @@ local function pattern_escape(s)
 end
 
 -- best-effort guess at a show title from the currently playing file, so
--- the search box starts pre-filled (same helper as the other extensions)
+-- the search box starts pre-filled
 local function guess_title_from_playing()
 	if not (vlc.input and vlc.input.item) then return nil end
 	local ok, item = pcall(vlc.input.item)

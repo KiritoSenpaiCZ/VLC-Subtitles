@@ -1,12 +1,11 @@
 --[[
-Hiyori.cz Subtitle Downloader - VLC Extension
-Search a show, browse its subtitle listing, download a subtitle (or show
-the link if it's an external/forwarded one), and load it into whatever's
-currently playing. The search box auto-fills a guess at the show title
-from whatever file is currently playing.
+Hiyori.cz Subtitles - VLC extension
 
-Logs in fresh on every request (no session caching) - simplicity over
-performance.
+Search a show, browse its subtitle list, download a subtitle and load it
+into whatever is playing. Subtitles hosted on other fansub sites are
+marked EXTERNAL and their link is copied to the clipboard instead.
+
+Logs in fresh on every request (no session caching).
 ]]
 
 function descriptor()
@@ -31,18 +30,14 @@ local current_stage = "search"
 local sub_rows = {} -- [n] = {ep=, title=, lang=, fansub=, href=, internal=(bool)}
 local current_anime_title = ""
 
--- credential storage: see the block below downloads_dir(), after the
--- helpers it needs (is_windows/run) exist. No longer plain text (see
--- titulky.lua's context doc for why) - revisited as promised above.
+-- defined in the credentials section further down, after the helpers
+-- they need
 local save_credentials, load_credentials
 
---[[ ---------------- shared download handling (v1.1) ----------------
-Same block in every Highflight VLC extension that predates v1.1 (Hiyori,
-WoSir, Edna, Kamui, Titulky), ported from the tested code of the newer
-ones (Legie Kondor, NyaSub, Hanabi). Everything is prefixed hf_ so it
-can't clash with the file's own helpers. Only local function definitions
-here: VLC's startup scan provides almost no standard Lua functions, so
-nothing may be called at a file's top level.
+--[[ ---------------- download handling ----------------
+Everything here is prefixed hf_ so it can't clash with the rest of the
+file. Only local function definitions: VLC's startup scan provides almost
+no standard Lua functions, so nothing may be called at a file's top level.
 
 What it does once a file has been downloaded (hf_finish):
   - rejects empty responses, HTML pages and anything over
@@ -486,12 +481,7 @@ local function decode_entities(str)
 end
 
 -- log_line, if given, is logged INSTEAD OF cmd - keeps credentials out of
--- VLC's debug console. This file used to log the full login curl command,
--- password included, straight into the debug log (found and fixed in
--- titulky.lua after a real password ended up in a pasted debug log there
--- - same bug, same fix, applied here too since it was never separately
--- caught in this file). If you're reading this after pasting a debug log
--- with a real password in it, change that password.
+-- VLC's debug console
 local function run(cmd, log_line)
 vlc.msg.dbg("[Hiyori] running: " .. (log_line or cmd))
 local p = io.popen(cmd, "r")
@@ -527,11 +517,9 @@ end
 end
 
 --[[ ---------------- credentials ----------------
-Same approach as titulky.lua (see that file's own comment here for the
-full reasoning) - username in a small plain-text file, password never
-written to disk in plain text: macOS Keychain via the `security` CLI, or
-on Windows, DPAPI via a short-lived PowerShell temp script. Not tested
-live yet on either OS.
+Username in a small plain-text file. The password is never written to
+disk in plain text: macOS Keychain via the `security` CLI, or on Windows,
+DPAPI via a short-lived PowerShell temp script.
 ]]
 
 local function username_file()
@@ -715,7 +703,7 @@ or string.match(row_html, "<td[^>]*>%s*(SK)%s*</td>")
 -- episode number + episode title: content-based, not a fixed column
 -- index (column order/count has drifted on this site before) - the
 -- title td always sits directly after the short bare-digit episode
--- number td, confirmed live against the current markup
+-- number td
 local ep, title = string.match(row_html, "<td[^>]*>%s*(%d%d?%d?)%s*</td>%s*<td[^>]*>%s*([^<]-)%s*</td>")
 local href = find_download_link(row_html)
 

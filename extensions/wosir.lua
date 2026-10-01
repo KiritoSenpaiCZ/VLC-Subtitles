@@ -1,20 +1,18 @@
 --[[
-WoSir.cz Subtitle Downloader - VLC Extension
-Same idea as hiyori.lua: search a show, browse its subtitle listing,
-download a subtitle and load it into whatever's currently playing.
+WoSir.cz Subtitles - VLC extension
 
-WoSir specifics vs Hiyori:
+Search a show, browse its subtitle list, download a subtitle and load it
+into whatever is playing.
+
+Site notes:
 - Login needs a CSRF token scraped from the login page first.
-- Everything on this site is Czech - no language column to parse.
-- Each row can be a TV or a Blu-ray (BD) release, distinguished by which
-hidden form field is present. The real "Stáhnout" button is a POST
-form submit (not the "Zkopírovat URL" button next to it, which is a
-separate decoy/convenience feature) - we replicate that exact POST.
-- No external/forwarded-subtitle concept here, unlike Hiyori.
+- Everything on the site is Czech, so there's no language column.
+- Each row can be a TV or a Blu-ray (BD) release, told apart by which
+  hidden form field is present. The real "Stáhnout" button is a POST form
+  submit (not the "Zkopírovat URL" button next to it), and that exact POST
+  is what gets sent.
 
-Manual search only for now (matches Hiyori's current scope).
-Logs in fresh on every request (no session caching), same tradeoff as
-both the Kodi addons and hiyori.lua made: simplicity over performance.
+Logs in fresh on every request (no session caching).
 ]]
 
 function descriptor()
@@ -40,18 +38,14 @@ local sub_rows = {} -- [n] = {ep=, translator=, is_bd=(bool), fields={name=value
 local current_anime_title = ""
 local current_anime_id = nil
 
--- credential storage: see the block below is_windows()/downloads_dir(),
--- after the helpers it needs exist. No longer plain text (see
--- titulky.lua's context doc for the reasoning) - revisited as promised.
+-- defined in the credentials section further down, after the helpers
+-- they need
 local save_credentials, load_credentials
 
---[[ ---------------- shared download handling (v1.1) ----------------
-Same block in every Highflight VLC extension that predates v1.1 (Hiyori,
-WoSir, Edna, Kamui, Titulky), ported from the tested code of the newer
-ones (Legie Kondor, NyaSub, Hanabi). Everything is prefixed hf_ so it
-can't clash with the file's own helpers. Only local function definitions
-here: VLC's startup scan provides almost no standard Lua functions, so
-nothing may be called at a file's top level.
+--[[ ---------------- download handling ----------------
+Everything here is prefixed hf_ so it can't clash with the rest of the
+file. Only local function definitions: VLC's startup scan provides almost
+no standard Lua functions, so nothing may be called at a file's top level.
 
 What it does once a file has been downloaded (hf_finish):
   - rejects empty responses, HTML pages and anything over
@@ -371,7 +365,7 @@ vlc.deactivate()
 end
 
 -- best-effort guess at a show title from the currently playing file,
--- so the search box starts pre-filled (same helper as hiyori.lua)
+-- so the search box starts pre-filled
 local function guess_title_from_playing()
 if not (vlc.input and vlc.input.item) then return nil end
 local ok, item = pcall(vlc.input.item)
@@ -494,11 +488,7 @@ local function decode_entities(str)
 end
 
 -- log_line, if given, is logged INSTEAD OF cmd - keeps credentials out of
--- VLC's debug console (same fix as titulky.lua's, found and applied there
--- first after a real password ended up in a pasted debug log - this file
--- had the identical bug, just never separately caught). If you're reading
--- this after pasting a debug log with a real password in it, change that
--- password.
+-- VLC's debug console
 local function run(cmd, log_line)
 vlc.msg.dbg("[WoSir] running: " .. (log_line or cmd))
 local p = io.popen(cmd, "r")
@@ -543,11 +533,9 @@ return string.match(attr_str, name .. '="([^"]*)"')
 end
 
 --[[ ---------------- credentials ----------------
-Same approach as titulky.lua (see that file's own comment here for the
-full reasoning) - username in a small plain-text file, password never
-written to disk in plain text: macOS Keychain via the `security` CLI, or
-on Windows, DPAPI via a short-lived PowerShell temp script. Not tested
-live yet on either OS.
+Username in a small plain-text file. The password is never written to
+disk in plain text: macOS Keychain via the `security` CLI, or on Windows,
+DPAPI via a short-lived PowerShell temp script.
 ]]
 
 local function username_file()
@@ -738,8 +726,8 @@ row_count = row_count + 1
 
 -- episode number + episode title: content-based (the title td
 -- always sits directly after the bare 1-3 digit episode-number
--- td), rather than a fixed column index - same lesson learned the
--- hard way on Hiyori's markup
+-- td), rather than a fixed column index, which has drifted on these
+-- sites before
 local ep, title = string.match(row_html, "<td[^>]*>%s*(%d%d?%d?)%s*</td>%s*<td[^>]*>%s*([^<]-)%s*</td>")
 
 -- find the real download form: whichever <form> in this row has
@@ -903,7 +891,7 @@ local url = anime_url(current_anime_id)
 
 -- POST exactly the fields the real form on the page would submit
 -- (file_to_download[_BD], dwl[_bd], hiddenid) - this is NOT the
--- "Zkopirovat URL" GET link, which is a different, decoy code path
+-- "Zkopirovat URL" GET link, which is a different code path
 local parts = {}
 for name, value in pairs(row.fields) do
 table.insert(parts, name .. "=" .. urlencode(decode_entities(value)))

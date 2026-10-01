@@ -1,56 +1,34 @@
 --[[
-Kamui-Subs.cz Subtitle Downloader - VLC Extension
+Kamui-Subs.cz Subtitles - VLC extension
 
-Same shell-out-to-curl architecture as hiyori.lua/wosir.lua/edna.lua/
-titulky.lua (VLC's Lua HTTPS API can't do POST/custom headers/cookies, so
-every request goes through curl via io.popen - see those files' own
-comments for the fuller reasoning).
+Search a show, pick its season page, then an episode; the subtitle zip is
+downloaded, unpacked and loaded into whatever is playing.
 
-Ported from the confirmed-live site logic already built and used in the
-Kodi addon (service.subtitles.kamui/service.py) rather than re-researched
-from scratch:
+Site notes:
   - WordPress + Elementor + Ultimate Member (login) + WP Download Manager.
-  - Each show/season is its OWN page (no internal season drill-down like
-    edna.cz) - season 1 / a movie has no "S<n>" suffix at all.
+  - Each show/season is its OWN page - season 1 / a movie has no "S<n>"
+    suffix at all.
   - Episode buttons are Elementor buttons: the href sits on the <a> tag,
     the visible label ("N. Dil") is two <span> levels deeper
-    (elementor-button-text), not direct text on the <a> itself. A
-    "Cela serie" (whole-season zip) link exists and is deliberately
-    skipped, same policy as edna's "Cela sezona".
+    (elementor-button-text). The "Cela serie" (whole-season zip) link is
+    deliberately skipped.
   - Login is Ultimate Member's default form at /log-in/: dynamically
     named fields username-<form_id>/user_password-<form_id> plus a
     freshly-scraped _wpnonce, POSTed back to /log-in/ itself. Success is
     a "wordpress_logged_in_*" cookie landing in the jar.
   - WordPress's own site search (?s=<query>) returns real show pages
-    (article.type-page) alongside individual per-episode "download item"
-    noise posts (article.type-lana_download), filtered out here the same
-    way the Kodi addon does.
-  - Every /download/<id>/ response is a real .zip (WP Download Manager's
-    standard file-transfer headers) - unlike Titulky/Edna there's no
-    raw-file fallback to consider, it's always a zip.
-  - The zip itself is password-protected with a fixed, site-wide password
-    (same for every user/download - confirmed live). It is
-    deliberately NOT hardcoded here, same reasoning as the Kodi addon's
-    1.0.3 fix: this extension's source is backed up to a GitHub repo, and
-    baking a real password into published source is bad practice even
-    when the password itself isn't a secret. The user types it into the
-    "Zip password" field in this dialog instead (see the Zip password
-    section below) - it's saved locally (plain text, like the username -
-    it's not personal/sensitive) so it only needs entering once.
+    (article.type-page) alongside per-episode "download item" posts
+    (article.type-lana_download), which are filtered out.
+  - Every /download/<id>/ response is a .zip, protected with a fixed,
+    site-wide password. It is deliberately NOT hardcoded here (published
+    source shouldn't carry a real password, even a non-secret one): the
+    user types it into the "Zip password" field once, and it's saved
+    locally in plain text, like the username.
 
-Extraction uses the system `unzip` (Mac/Linux, supports the -P password
-flag directly) or `tar` (bundled with Windows 10 1803+, via its
---passphrase option) - same "shell out to a system tool" approach
-titulky.lua uses for its own (unprotected) zip downloads. Confirmed
-working on both: macOS via `unzip -P`, and Windows (VLC 3.0.23, 2026-10-01)
-via the bundled tar.exe's --passphrase, including a clear message when the
-zip password is missing or wrong.
+Zips are extracted with the system `unzip -P` (macOS/Linux) or the
+`tar --passphrase` bundled with Windows 10 1803+.
 
-Manual search only (matches Hiyori/WoSir/Edna's current scope - no
-Kodi-style playback-metadata auto-search here either, this is the manual
-dialog flow all four VLC extensions share).
-Logs in fresh on every request (no session caching), same tradeoff as
-the Kodi addon and the other three VLC extensions.
+Logs in fresh on every request (no session caching).
 ]]
 
 function descriptor()
@@ -80,13 +58,10 @@ local current_show_title = ""
 -- credential storage: see the block after is_windows()/downloads_dir()
 local save_credentials, load_credentials
 
---[[ ---------------- shared download handling (v1.1) ----------------
-Same block in every Highflight VLC extension that predates v1.1 (Hiyori,
-WoSir, Edna, Kamui, Titulky), ported from the tested code of the newer
-ones (Legie Kondor, NyaSub, Hanabi). Everything is prefixed hf_ so it
-can't clash with the file's own helpers. Only local function definitions
-here: VLC's startup scan provides almost no standard Lua functions, so
-nothing may be called at a file's top level.
+--[[ ---------------- download handling ----------------
+Everything here is prefixed hf_ so it can't clash with the rest of the
+file. Only local function definitions: VLC's startup scan provides almost
+no standard Lua functions, so nothing may be called at a file's top level.
 
 What it does once a file has been downloaded (hf_finish):
   - rejects empty responses, HTML pages and anything over
@@ -406,7 +381,7 @@ vlc.deactivate()
 end
 
 -- best-effort guess at a show title from the currently playing file, so
--- the search box starts pre-filled (same helper as the other 3 extensions)
+-- the search box starts pre-filled
 local function guess_title_from_playing()
 if not (vlc.input and vlc.input.item) then return nil end
 local ok, item = pcall(vlc.input.item)
@@ -527,8 +502,7 @@ local function decode_entities(str)
 end
 
 -- log_line, if given, is logged INSTEAD OF cmd - keeps credentials out of
--- VLC's debug console (see titulky.lua/hiyori.lua/wosir.lua for the real
--- incident that made this mandatory everywhere).
+-- VLC's debug console
 local function run(cmd, log_line)
 vlc.msg.dbg("[Kamui] running: " .. (log_line or cmd))
 local p = io.popen(cmd, "r")
@@ -569,12 +543,11 @@ return run(cmd, log_cmd)
 end
 
 --[[ ---------------- credentials ----------------
-Same secure-storage approach as hiyori.lua/wosir.lua/edna.lua: username in
-a small plain-text file, real password never written to disk in plain
-text (macOS Keychain via `security`, Windows DPAPI via a short-lived
-PowerShell temp script). The zip password is NOT a personal secret (it's
-the same fixed value for every user on this site) so it's stored as
-plain text, same as the username.
+Username in a small plain-text file. The account password is never
+written to disk in plain text: macOS Keychain via the `security` CLI, or
+on Windows, DPAPI via a short-lived PowerShell temp script. The zip
+password is the same for every user (not a personal secret), so it's
+stored as plain text, like the username.
 ]]
 
 local function username_file()
@@ -695,8 +668,7 @@ f:close()
 return pw
 end
 
--- fresh login every time, matching service.py's no-session-caching policy.
--- Ultimate Member names its username/password fields dynamically as
+-- fresh login every time. Ultimate Member names its username/password fields dynamically as
 -- username-<form_id>/user_password-<form_id> and requires a fresh
 -- _wpnonce scraped from the just-loaded form.
 local function login(username, password)
@@ -741,9 +713,7 @@ local log_data = "username-" .. form_id .. "=" .. urlencode(username)
 local result = post("https://kamui-subs.cz/log-in/", post_data, "https://kamui-subs.cz/log-in/", log_data)
 if result == nil then return false end
 
--- success is a wordpress_logged_in_* cookie landing in the jar, same
--- check as service.py's login() (which reads it off the session object
--- directly - here we just grep the curl cookie-jar file for it).
+-- success is a wordpress_logged_in_* cookie landing in the jar
 local jar = io.open(cookie_jar(), "r")
 if not jar then return false end
 local jar_contents = jar:read("*a") or ""
@@ -755,7 +725,7 @@ end
 
 -- returns [{title=, url=}] for real show/season pages only - WordPress's
 -- own search also matches individual per-episode "download item" posts
--- (type-lana_download) which are filtered out here, same as service.py.
+-- (type-lana_download), which are filtered out here.
 local function parse_search_results(html)
 local out = {}
 for attrs, block in string.gmatch(html, '<article(.-)>(.-)</article>') do
@@ -770,8 +740,7 @@ return out
 end
 
 -- returns [{ep=, href=, label=}] - one per numbered episode button on the
--- show/season page ("Cela serie" whole-season zip is skipped, same as
--- service.py's parse_episode_links()). Each button is an Elementor
+-- show/season page ("Cela serie" whole-season zip is skipped). Each button is an Elementor
 -- widget: href on the <a>, visible label two <span> levels deeper.
 local function parse_episode_links(html)
 local rows = {}
@@ -789,12 +758,7 @@ return rows
 end
 
 --[[ ---------------- zip extraction ----------------
-Every download on this site is a password-protected zip (confirmed live -
-see the file header comment for why the password itself lives
-only in the dialog's Zip password field, never here). Tries WITHOUT a
-password first (mirrors service.py's _extract_zip - harmless if it always
-needs one, just a wasted attempt), then retries with the configured
-password if nothing came out.
+Not used any more: downloads go through hf_finish/hf_extract above.
 ]]
 
 local SUBTITLE_EXTS = { srt = true, ass = true, ssa = true, sub = true, vtt = true }
@@ -822,9 +786,6 @@ local listing = list_dir(dest_dir)
 if listing == "" and zip_password and zip_password ~= "" then
 vlc.msg.dbg("[Kamui] extract without a password produced nothing, retrying with the configured zip password")
 if is_windows() then
--- UNVERIFIED on Windows - see file header comment. bsdtar's
--- --passphrase is the documented option for this; if it doesn't
--- work here, that's the known gap.
 run(string.format('tar -xf "%s" -C "%s" --passphrase %s 2>nul', zip_path, dest_dir, sh_dquote(zip_password)))
 else
 run(string.format('unzip -o -j -P %s "%s" -d "%s" >/dev/null 2>&1', sh_dquote(zip_password), zip_path, dest_dir))

@@ -1,15 +1,15 @@
 --[[
-Titulky.com Subtitle Downloader - VLC Extension (premium.titulky.com only)
+Titulky.com Subtitles - VLC extension (premium.titulky.com only)
 
-Same idea as hiyori.lua/wosir.lua: search, pick a result, download, and
-load it into whatever's currently playing. Requires a premium.titulky.com
-account - the free/anonymous titulky.com site is not supported.
+Search, pick a title and a release, download the subtitle and load it
+into whatever is playing. Requires a premium.titulky.com account; the
+free titulky.com site is not supported.
 
-The "primary" (first) result in a release list is parsed with a
-plain-text heuristic rather than structured markup, so its release-tag
-label is occasionally slightly off; alternates are parsed normally.
+The "primary" (first) release of a title is read from the page text with
+a heuristic rather than from structured markup, so its release tag is
+occasionally slightly off; the alternates are parsed normally.
 
-Manual search only. Logs in fresh on every request (no session caching).
+Logs in fresh on every request (no session caching).
 ]]
 
 function descriptor()
@@ -34,17 +34,14 @@ local status_label = nil
 local sub_rows = {}
 local pending_row = nil
 
--- credential storage: see the block below post(), after the helpers it
--- needs (is_windows/run/downloads_dir-style userdatadir access) exist.
+-- defined in the credentials section further down, after the helpers
+-- they need
 local save_credentials, load_credentials
 
---[[ ---------------- shared download handling (v1.1) ----------------
-Same block in every Highflight VLC extension that predates v1.1 (Hiyori,
-WoSir, Edna, Kamui, Titulky), ported from the tested code of the newer
-ones (Legie Kondor, NyaSub, Hanabi). Everything is prefixed hf_ so it
-can't clash with the file's own helpers. Only local function definitions
-here: VLC's startup scan provides almost no standard Lua functions, so
-nothing may be called at a file's top level.
+--[[ ---------------- download handling ----------------
+Everything here is prefixed hf_ so it can't clash with the rest of the
+file. Only local function definitions: VLC's startup scan provides almost
+no standard Lua functions, so nothing may be called at a file's top level.
 
 What it does once a file has been downloaded (hf_finish):
   - rejects empty responses, HTML pages and anything over
@@ -363,9 +360,8 @@ function close()
 vlc.deactivate()
 end
 
--- best-effort guess at a title from the currently playing file (same
--- helper as hiyori.lua/wosir.lua, verbatim, plus a bare-year cut point
--- added for titulky.lua specifically)
+-- best-effort guess at a title from the currently playing file, so the
+-- search box starts pre-filled
 local function guess_title_from_playing()
 if not (vlc.input and vlc.input.item) then return nil end
 local ok, item = pcall(vlc.input.item)
@@ -385,9 +381,8 @@ name = string.gsub(name, "[%._]", " ") -- dots/underscores -> spaces
 local lower = string.lower(name)
 local cut_at = string.find(lower, "s%d%d?e%d%d?")
 
--- a bare release year (e.g. "Avatar Fire and Ash 2025 2160p...") was
--- surviving into the guess and breaking search - cut at the earliest
--- standalone 4-digit year too, same as the quality/codec tags below.
+-- cut at the earliest standalone 4-digit year (e.g. "Avatar Fire and Ash
+-- 2025 2160p..."), same as the quality/codec tags below.
 -- %f[%d]/%f[%D] (frontier patterns) make sure this only matches a
 -- whole 4-digit token, not part of a longer number.
 local year_pos = string.find(lower, "%f[%d]%d%d%d%d%f[%D]")
@@ -418,11 +413,9 @@ if name == "" then return nil end
 return name
 end
 
--- VERSION_TAG: bump this string (and descriptor().version above) whenever
--- this file changes, and check it shows up in the dialog's title bar. If
--- it doesn't, VLC is still running an old copy of this file, not the one
--- you just edited - that's the first thing to rule out, before chasing
--- any more layout theories.
+-- VERSION_TAG: shown in the dialog's title bar. Keep it in step with
+-- descriptor().version; if the title bar shows an old version, VLC is
+-- still running an old copy of this file.
 local VERSION_TAG = "v1.1.0"
 
 function show_dialog()
@@ -430,21 +423,11 @@ dlg = vlc.dialog("Titulky.com Subtitles (" .. VERSION_TAG .. ")")
 local saved_username, saved_password = load_credentials()
 local guessed_title = guess_title_from_playing()
 
--- Width/height on add_text_input/add_password/add_list are documented
--- as pixel HINTS that "may be discarded by the GUI module" - and in
--- testing here (460, then 720, plus a full VLC restart and a manual
--- window-edge drag) they made no visible difference at all, so treat
--- them as a no-op safety net, not the real lever.
---
--- What VLC's own Lua docs say instead: "VLC will always try to shrink
--- the dialog window" to the natural minimum size of its widgets - and
--- a plain QLineEdit/QListWidget's natural size doesn't grow with its
--- content or with these hints. The one thing that reliably *does*
--- grow a column is a single-column widget with real text in it - e.g.
--- hiyori.lua/wosir.lua's row of 3 real buttons across all 3 columns
--- (never reported as too narrow), versus this dialog's old 2-button
--- row that left column 3 with nothing sized to it. So: a third real
--- button, one per column, same as the working reference extensions.
+-- Width/height on add_text_input/add_password/add_list are only hints
+-- that VLC's GUI may ignore (in practice they make no visible difference),
+-- and VLC always shrinks a dialog to its widgets' natural size. What
+-- reliably widens a column is a button with real text in it, so the
+-- button row has one button per column (3 in total).
 local WIDE = 720
 
 dlg:add_label("Username:", 1, 1, 1, 1)
@@ -517,11 +500,8 @@ local function decode_entities(str)
 	return str
 end
 
--- log_line, if given, is logged INSTEAD OF cmd - used to keep credentials
--- out of VLC's debug console (which a previous version of this file
--- didn't do: the login POST, password included, was going straight into
--- the log verbatim - if you're reading this after pasting a debug log
--- with a real password in it, change that password)
+-- log_line, if given, is logged INSTEAD OF cmd - keeps credentials out of
+-- VLC's debug console
 local function run(cmd, log_line)
 vlc.msg.dbg("[Titulky] running: " .. (log_line or cmd))
 local p = io.popen(cmd, "r")
@@ -547,10 +527,9 @@ return (os.getenv("HOME") or vlc.config.userdatadir()) .. "/Downloads"
 end
 end
 
--- --max-time on every curl call: none of these had a timeout before,
--- so a slow/unreachable server could hang the curl process forever -
--- and since io.popen blocks VLC's whole UI thread waiting for it, that
--- would look exactly like "nothing happens when I click", not an error.
+-- --max-time on every curl call: io.popen blocks VLC's whole UI thread
+-- while curl runs, so a server that never answers would otherwise freeze
+-- the dialog with no error.
 local function get(url, referer)
 local ref = referer and string.format(' -e "%s"', referer) or ""
 local cmd = string.format('curl -sS -L -b "%s" -c "%s" --max-time 20%s "%s"', cookie_jar(), cookie_jar(), ref, url)
@@ -568,34 +547,21 @@ return run(cmd, log_cmd)
 end
 
 --[[ ---------------- credentials ----------------
-Username goes in a small plain-text file (not sensitive on its own).
-The password is NEVER written to disk in plain text (same approach as
-hiyori.lua/wosir.lua). VLC's Lua API has no credential-store access itself, so this
-shells out, differently per OS since there's no single cross-platform
-mechanism reachable that way:
-- macOS: the real system Keychain, via the `security` CLI tool that
-ships with macOS. The password is only ever a (shell-escaped)
-`security` command-line argument and Keychain's own storage - never a
-file on disk.
-- Windows: there's no simple CLI equivalent of `security` for reading a
-saved Credential Manager entry back out as plain text, so this uses
-DPAPI directly instead - the same OS primitive Credential Manager and
-browsers' own saved-password features sit on top of. PowerShell's
-ConvertTo-SecureString/-AsPlainText + ConvertFrom-SecureString
-encrypts the password to a string only this Windows *user account*
-can ever decrypt again. The password is written to a temporary .ps1
-script file via Lua's own io.open (no shell involved, so it never
-appears on a command line or in this file's debug logging) and that
-temp script is deleted immediately after running - it exists on disk
-only for the moment it takes PowerShell to read and run it.
-NEITHER path has been tested live yet - this needs a real run (and debug
-log, if something goes wrong) on both macOS and Windows.
+Username in a small plain-text file. The password is never written to
+disk in plain text. VLC's Lua API has no credential store, so this
+shells out, differently per OS:
+- macOS: the system Keychain, via the `security` CLI. The password is
+  only ever a (shell-escaped) `security` argument and Keychain's own
+  storage, never a file on disk.
+- Windows: DPAPI (what Credential Manager itself is built on), via
+  PowerShell's ConvertTo-SecureString / ConvertFrom-SecureString: the
+  result can only be decrypted by this Windows user account. The
+  password goes into a temporary .ps1 script written with io.open (so it
+  never appears on a command line or in the debug log), deleted right
+  after it runs.
 
-One-time migration: if the OLD plain-text titulky_credentials.txt from a
-previous version of this file is still on disk, it's read once here,
-moved into the new secure storage below, and then deleted - otherwise
-fixing this going forward would leave the actual leak (that old file)
-sitting there untouched.
+One-time migration: an old plain-text titulky_credentials.txt left by an
+early version is read once, moved into secure storage, then deleted.
 ]]
 
 local function username_file()
@@ -721,8 +687,8 @@ return username, password
 end
 
 -- fresh login, returns true/false. Always starts from an empty cookie
--- jar (same reasoning as wosir.lua's login). premium.titulky.com has its
--- own separate login from www.titulky.com - sessions don't carry over.
+-- jar. premium.titulky.com has its own login, separate from
+-- www.titulky.com - sessions don't carry over.
 local function login(username, password)
 os.remove(cookie_jar())
 
@@ -737,9 +703,8 @@ vlc.msg.dbg("[Titulky] login POST returned nothing - curl didn't run or timed ou
 return false
 end
 
--- on success the page shows "Odhlásit" (log out) same as every other
--- logged-in-state check in this file; logging a snippet of the body
--- too (safe, no credentials in it) in case this needs revisiting
+-- on success the page shows "Odhlásit" (log out); a snippet of the body
+-- is logged too (no credentials in it) for troubleshooting
 local ok = string.find(result, "Odhlásit", 1, true) ~= nil
 local snippet = string.gsub(result, "%s+", " ")
 snippet = string.sub(snippet, 1, 300)
@@ -750,18 +715,14 @@ return ok
 end
 
 --[[ ---------------- parsing ----------------
-premium.titulky.com's tables are parsed the same "split into <td> cells,
-index by position" way as the old www.titulky.com parser used, since Lua
-patterns can't do the reference Python code's backreference-counting
-regex. Two tables in play:
+premium.titulky.com's tables are parsed by splitting rows into <td> cells
+and reading them by position. Two tables in play:
 
 Search results (title matches), 3 columns: checkbox, title (a <small>
 badge + the title link), alternative names.
 
 A title's "Alternativní titulky" table, 6 columns: checkbox, title
-link, date, author link, release tag, checkbox. This one's confirmed
-from the page's own structure (class names + column order), not from
-literal HTML source - see the file header.
+link, date, author link, release tag, checkbox.
 ]]
 
 local function td_cells(row_html)
@@ -803,8 +764,7 @@ return out
 end
 
 -- combines the title's "primary" release (reconstructed with a plain-
--- text heuristic - see file header) with its alternates table (parsed
--- properly, like the other tables in this file)
+-- text heuristic - see file header) with its alternates table
 local function parse_premium_detail(html, primary_id, primary_title)
 html = decode_entities(html)
 local dl_pos = string.find(html, "download%.php%?id=")
@@ -818,19 +778,12 @@ line = string.match(line, "^%s*(.-)%s*$")
 if line ~= "" then table.insert(lines, line) end
 end
 
--- Every page on the site (logged in or not) opens with the same
--- header/logo, rendered as plain text "premium." + bold "Titulky" -
--- confirmed live by loading the site directly. That "premium." token
--- alone matches the release-tag pattern below (word chars + a dot,
--- no spaces) and was being picked up before the scan ever reached
--- the real release tag further down the page - hence releases
--- showing "[premium.]" as their tag. Fix: skip everything up to and
--- including the line with the film's own title (which we already
--- know from the search step) before starting the release-tag scan,
--- so the shared header/nav above it can't match at all. Falls back
--- to scanning every line if the title isn't found verbatim (e.g.
--- HTML entities/whitespace differ from the search result's copy),
--- same as the old behaviour.
+-- Every page opens with the site's logo as plain text "premium." +
+-- "Titulky", and "premium." alone matches the release-tag pattern below.
+-- So the scan starts after the line with the film's own title (known
+-- from the search step), so the header can't match. Falls back to
+-- scanning every line if the title isn't found verbatim (e.g. HTML
+-- entities or whitespace differ from the search result's copy).
 local scan_from = 1
 if primary_title and primary_title ~= "" then
 local needle = string.lower(primary_title)
@@ -845,17 +798,11 @@ end
 -- heuristic: the release tag reads like a scene-release token
 -- (letters/digits/dots/hyphens, no spaces, at least one dot/hyphen) -
 -- e.g. "UHD.BluRay", "WEBRip-NeoNoir" - excluding the site's own
--- branding text as a belt-and-suspenders in case scan_from above
--- didn't find the title line.
+-- branding text in case scan_from above didn't find the title line.
 --
--- Also requires at least one letter: the upload date (e.g.
--- "2.5.2027") sits right after the title on the page, before the
--- actual release tag, and is otherwise indistinguishable from a
--- release tag by this pattern (digits + dots, no spaces) - a real
--- scene tag always has letters in it (WEBRip, BluRay, WEB-DL, ...),
--- a date never does, so that's what tells them apart. Confirmed
--- live: without this, the primary entry showed "[2.5.2027]" instead
--- of a real tag.
+-- Also requires at least one letter: the upload date (e.g. "2.5.2027")
+-- sits right after the title, before the real release tag, and would
+-- otherwise match too. A real scene tag always has letters in it.
 local release_tag = nil
 for i = scan_from, #lines do
 local line = lines[i]
@@ -900,10 +847,9 @@ return label
 end
 
 --[[ ---------------- zip extraction ----------------
-premium.titulky.com always wraps the actual subtitle in a zip. Shells
-out to unzip (Mac/Linux) or tar (bundled with Windows 10
-1803+, which can extract zip archives) - the same "use a system tool via
-io.popen" approach as curl, rather than a pure-Lua zip parser.
+premium.titulky.com always wraps the actual subtitle in a zip. Extracted
+with the system unzip (macOS/Linux) or tar (bundled with Windows 10
+1803+, and able to extract zips).
 ]]
 
 local SUBTITLE_EXTS = { srt = true, ass = true, ssa = true, sub = true, vtt = true }
