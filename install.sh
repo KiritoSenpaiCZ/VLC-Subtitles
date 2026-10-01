@@ -12,7 +12,7 @@
 
 set -u
 
-EXTENSIONS="hiyori wosir edna kamui titulky legiekondor nyasub hanabi"
+EXTENSIONS="hiyori wosir edna kamui titulky legiekondor nyasub hanabi hns"
 RAW_BASE="https://raw.githubusercontent.com/KiritoSenpaiCZ/VLC-Subtitles/main/extensions"
 DEST="${VLC_EXT_DIR:-$HOME/Library/Application Support/org.videolan.vlc/lua/extensions}"
 

@@ -11,6 +11,7 @@ Compatible with VLC 3.x on Windows 10/11 and macOS (tested on VLC 3.0.23).
 | Edna Subtitles | [edna.cz](https://www.edna.cz) | Czech/Slovak TV shows | 1.2.0 | Account | Unofficial |
 | Hanabi Subtitles | [hanabi.fan](https://hanabi.fan) | Czech anime | 1.1.0 | Access token (free account) | **Official API** |
 | Hiyori Subtitles | [hiyori.cz](https://hiyori.cz) | Czech/Slovak anime | 1.3.0 | Account | Unofficial |
+| HNS Subtitles | [hns.sk](https://hns.sk) | Czech/Slovak anime | 1.0.0 | Account (e-mail) | Unofficial |
 | Kamui-Subs Subtitles | [kamui-subs.cz](https://kamui-subs.cz) | Czech anime | 1.3.0 | Account + ZIP password | Unofficial |
 | Legie Kondor Subtitles | [anime4.legiekondor.cz](https://anime4.legiekondor.cz) | Czech anime | 1.1.0 | Nothing | Unofficial |
 | NyaSub Subtitles | [nyasub.cz](https://nyasub.cz) | Czech anime | 1.1.0 | Nothing | Unofficial |
@@ -22,7 +23,7 @@ Compatible with VLC 3.x on Windows 10/11 and macOS (tested on VLC 3.0.23).
 - **Unofficial**: the extension reads the site's own web pages (HTML scraping). Not sanctioned by the site, and it can break at any time if the site changes its layout, until the extension is updated.
 
 ## Installation Instructions
-The installer copies all eight extensions into VLC's extensions folder (creating it if needed). **Run it again any time to update**: it shows what changed, and your saved logins, tokens and downloaded subtitles are kept.
+The installer copies all nine extensions into VLC's extensions folder (creating it if needed). **Run it again any time to update**: it shows what changed, and your saved logins, tokens and downloaded subtitles are kept.
 
 **Windows** — open PowerShell and run:
 

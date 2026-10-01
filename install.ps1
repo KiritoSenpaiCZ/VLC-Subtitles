@@ -11,7 +11,7 @@
 
 $ErrorActionPreference = 'Stop'
 
-$Extensions = @('hiyori', 'wosir', 'edna', 'kamui', 'titulky', 'legiekondor', 'nyasub', 'hanabi')
+$Extensions = @('hiyori', 'wosir', 'edna', 'kamui', 'titulky', 'legiekondor', 'nyasub', 'hanabi', 'hns')
 $RawBase = 'https://raw.githubusercontent.com/KiritoSenpaiCZ/VLC-Subtitles/main/extensions'
 $Dest = Join-Path $env:APPDATA 'vlc\lua\extensions'
 

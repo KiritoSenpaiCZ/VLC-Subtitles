@@ -2,6 +2,7 @@
   "blocks": {
     "hf_download": [
       "VLC-Edna/edna.lua",
+      "VLC-HNS/hns.lua",
       "VLC-Hiyori/hiyori.lua",
       "VLC-Kamui/kamui.lua",
       "VLC-Titulky/titulky.lua",
@@ -22,6 +23,10 @@
     [
       "VLC-Edna/edna.lua",
       "VLC-Subtitles/extensions/edna.lua"
+    ],
+    [
+      "VLC-HNS/hns.lua",
+      "VLC-Subtitles/extensions/hns.lua"
     ],
     [
       "VLC-Hanabi/hanabi.lua",
