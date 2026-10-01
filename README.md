@@ -8,14 +8,14 @@ Compatible with VLC 3.x on Windows 10/11 and macOS (tested on VLC 3.0.23).
 
 | Extension | Site | Content | Version | Needs | Support |
 |---|---|---|---|---|---|
-| Edna Subtitles | [edna.cz](https://www.edna.cz) | Czech/Slovak TV shows | 1.1.0 | Account | Unofficial |
-| Hanabi Subtitles | [hanabi.fan](https://hanabi.fan) | Czech anime | 1.0.0 | Access token (free account) | **Official API** |
-| Hiyori Subtitles | [hiyori.cz](https://hiyori.cz) | Czech/Slovak anime | 1.1.0 | Account | Unofficial |
-| Kamui-Subs Subtitles | [kamui-subs.cz](https://kamui-subs.cz) | Czech anime | 1.1.0 | Account + ZIP password | Unofficial |
-| Legie Kondor Subtitles | [anime4.legiekondor.cz](https://anime4.legiekondor.cz) | Czech anime | 1.0.0 | Nothing | Unofficial |
-| NyaSub Subtitles | [nyasub.cz](https://nyasub.cz) | Czech anime | 1.0.0 | Nothing | Unofficial |
-| Titulky.com Subtitles | [titulky.com](https://premium.titulky.com) | Czech/Slovak movies and TV | 1.1.0 | Premium account | Unofficial |
-| WoSir Subtitles | [wosir.cz](https://www.wosir.cz) | Czech anime | 1.1.0 | Account | Unofficial |
+| Edna Subtitles | [edna.cz](https://www.edna.cz) | Czech/Slovak TV shows | 1.1.1 | Account | Unofficial |
+| Hanabi Subtitles | [hanabi.fan](https://hanabi.fan) | Czech anime | 1.0.1 | Access token (free account) | **Official API** |
+| Hiyori Subtitles | [hiyori.cz](https://hiyori.cz) | Czech/Slovak anime | 1.1.1 | Account | Unofficial |
+| Kamui-Subs Subtitles | [kamui-subs.cz](https://kamui-subs.cz) | Czech anime | 1.1.1 | Account + ZIP password | Unofficial |
+| Legie Kondor Subtitles | [anime4.legiekondor.cz](https://anime4.legiekondor.cz) | Czech anime | 1.0.1 | Nothing | Unofficial |
+| NyaSub Subtitles | [nyasub.cz](https://nyasub.cz) | Czech anime | 1.0.1 | Nothing | Unofficial |
+| Titulky.com Subtitles | [titulky.com](https://premium.titulky.com) | Czech/Slovak movies and TV | 1.1.1 | Premium account | Unofficial |
+| WoSir Subtitles | [wosir.cz](https://www.wosir.cz) | Czech anime | 1.1.1 | Account | Unofficial |
 
 **Support:**
 - **Official API**: the site publishes and supports an API for exactly this purpose. Documented and stable.

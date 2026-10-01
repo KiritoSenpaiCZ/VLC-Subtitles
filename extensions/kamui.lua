@@ -33,8 +33,8 @@ Logs in fresh on every request (no session caching).
 
 function descriptor()
 return {
-title = "Kamui Subtitles v1.1.0",
-version = "1.1.0",
+title = "Kamui Subtitles v1.1.1",
+version = "1.1.1",
 author = "Highflight Studio",
 shortdesc = "Kamui-Subs subtitles",
 description = "Search kamui-subs.cz and download/apply subtitles.",
@@ -55,7 +55,7 @@ local show_pages = {} -- [n] = {title=, url=}
 local ep_rows = {} -- [n] = {ep=, href=, label=}
 local current_show_title = ""
 
--- credential storage: see the block after is_windows()/downloads_dir()
+-- defined in the credentials section further down
 local save_credentials, load_credentials
 
 --[[ ---------------- download handling ----------------
@@ -426,7 +426,7 @@ return name
 end
 
 function show_dialog()
-dlg = vlc.dialog("Kamui Subtitles v1.1.0")
+dlg = vlc.dialog("Kamui Subtitles v1.1.1")
 local saved_username, saved_password = load_credentials()
 local saved_zippw = load_zip_password()
 local guessed_title = guess_title_from_playing()
@@ -518,14 +518,6 @@ end
 
 local function is_windows()
 return package.config:sub(1, 1) == "\\"
-end
-
-local function downloads_dir()
-if is_windows() then
-return (os.getenv("USERPROFILE") or vlc.config.userdatadir()) .. "/Downloads"
-else
-return (os.getenv("HOME") or vlc.config.userdatadir()) .. "/Downloads"
-end
 end
 
 local function get(url, referer)
@@ -755,55 +747,6 @@ end
 end
 end
 return rows
-end
-
---[[ ---------------- zip extraction ----------------
-Not used any more: downloads go through hf_finish/hf_extract above.
-]]
-
-local SUBTITLE_EXTS = { srt = true, ass = true, ssa = true, sub = true, vtt = true }
-
-local function list_dir(dest_dir)
-if is_windows() then
-return run('dir /b "' .. dest_dir .. '"') or ""
-end
-return run('ls -1 "' .. dest_dir .. '"') or ""
-end
-
-local function extract_zip(zip_path, zip_password)
-local dest_dir = vlc.config.userdatadir() .. "/kamui_extract_" .. tostring(os.time())
-
-if is_windows() then
-run('mkdir "' .. dest_dir .. '" 2>nul')
-run(string.format('tar -xf "%s" -C "%s" 2>nul', zip_path, dest_dir))
-else
-run('mkdir -p "' .. dest_dir .. '"')
-run(string.format('unzip -o -j "%s" -d "%s" >/dev/null 2>&1', zip_path, dest_dir))
-end
-
-local listing = list_dir(dest_dir)
-
-if listing == "" and zip_password and zip_password ~= "" then
-vlc.msg.dbg("[Kamui] extract without a password produced nothing, retrying with the configured zip password")
-if is_windows() then
-run(string.format('tar -xf "%s" -C "%s" --passphrase %s 2>nul', zip_path, dest_dir, sh_dquote(zip_password)))
-else
-run(string.format('unzip -o -j -P %s "%s" -d "%s" >/dev/null 2>&1', sh_dquote(zip_password), zip_path, dest_dir))
-end
-listing = list_dir(dest_dir)
-end
-
-local best = nil
-for fname in string.gmatch(listing, "[^\r\n]+") do
-local ext = string.match(fname, "%.([%a]+)$")
-if ext and SUBTITLE_EXTS[string.lower(ext)] then
-best = fname
-break
-end
-if not best then best = fname end
-end
-if not best or best == "" then return nil end
-return dest_dir .. "/" .. best
 end
 
 --[[ ---------------- actions ---------------- ]]

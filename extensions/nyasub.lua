@@ -40,7 +40,7 @@ Debug: enable VLC's debug log (Tools -> Messages, verbosity 2) and look for
 lines starting with "[NyaSub]".
 ]]
 
-local VERSION = "1.0.0"
+local VERSION = "1.0.1"
 local TAG = "[NyaSub]"
 local PREFIX = "nyasub" -- file-name prefix for everything this extension creates
 local BASE_URL = "https://nyasub.cz"
@@ -110,14 +110,6 @@ local function run(cmd, log_line)
 	local out = p:read("*a")
 	p:close()
 	return out
-end
-
-local function file_size(path)
-	local f = io.open(path, "rb")
-	if not f then return 0 end
-	local size = f:seek("end") or 0
-	f:close()
-	return size
 end
 
 local function read_file(path)
@@ -230,14 +222,6 @@ end
 
 --[[ ---------------- text helpers ---------------- ]]
 
-local function urlencode(str)
-	if str == nil then return "" end
-	str = string.gsub(str, "([^%w%-%_%.%~])", function(c)
-		return string.format("%%%02X", string.byte(c))
-	end)
-	return str
-end
-
 -- UTF-8 encoding of a code point (Lua 5.1 has no utf8 library)
 local function utf8_char(cp)
 	if cp < 0x80 then
@@ -270,11 +254,6 @@ end
 
 local function trim(s)
 	return (string.gsub(s or "", "^%s*(.-)%s*$", "%1"))
-end
-
--- escape Lua pattern magic characters so a literal string can be matched
-local function pattern_escape(s)
-	return (string.gsub(s, "(%p)", "%%%1"))
 end
 
 -- best-effort guess at a show title from the currently playing file, so

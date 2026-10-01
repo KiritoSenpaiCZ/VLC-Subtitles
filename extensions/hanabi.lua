@@ -43,7 +43,7 @@ Debug: enable VLC's debug log (Tools -> Messages, verbosity 2) and look for
 lines starting with "[Hanabi]". The token is never logged.
 ]]
 
-local VERSION = "1.0.0"
+local VERSION = "1.0.1"
 local TAG = "[Hanabi]"
 local PREFIX = "hanabi" -- file-name prefix for everything this extension creates
 local API_BASE = "https://hanabi.fan/wp-json/hanabi/v1"
@@ -117,14 +117,6 @@ local function run(cmd, log_line)
 	local out = p:read("*a")
 	p:close()
 	return out
-end
-
-local function file_size(path)
-	local f = io.open(path, "rb")
-	if not f then return 0 end
-	local size = f:seek("end") or 0
-	f:close()
-	return size
 end
 
 local function read_file(path)
@@ -258,26 +250,8 @@ local function utf8_char(cp)
 	return "?"
 end
 
-local function decode_entities(str)
-	if not str then return str end
-	str = string.gsub(str, "&#[xX](%x+);", function(h) return utf8_char(tonumber(h, 16)) end)
-	str = string.gsub(str, "&#(%d+);", function(d) return utf8_char(tonumber(d)) end)
-	str = string.gsub(str, "&quot;", '"')
-	str = string.gsub(str, "&apos;", "'")
-	str = string.gsub(str, "&lt;", "<")
-	str = string.gsub(str, "&gt;", ">")
-	str = string.gsub(str, "&nbsp;", " ")
-	str = string.gsub(str, "&amp;", "&") -- last, so "&amp;lt;" stays "&lt;"
-	return str
-end
-
 local function trim(s)
 	return (string.gsub(s or "", "^%s*(.-)%s*$", "%1"))
-end
-
--- escape Lua pattern magic characters so a literal string can be matched
-local function pattern_escape(s)
-	return (string.gsub(s, "(%p)", "%%%1"))
 end
 
 -- best-effort guess at a show title from the currently playing file, so
@@ -826,37 +800,6 @@ local function check_download(data)
 end
 
 local SUBTITLE_EXTS = { srt = true, ass = true, ssa = true, sub = true, vtt = true }
-
--- extension from a Content-Disposition header, else from the content
-local function guess_extension(headers, data)
-	local fname = string.match(headers or "", '[Ff]ilename%*?=[^\r\n]-([^\'"\r\n;=]+%.%w+)')
-	if fname then
-		local ext = string.lower(string.match(fname, "%.(%w+)$") or "")
-		if SUBTITLE_EXTS[ext] then return ext end
-	end
-	local head = string.gsub(string.sub(data, 1, 200), "^\239\187\191", "")
-	if string.match(head, "^%s*%[Script Info%]") then return "ass" end
-	return "srt"
-end
-
--- extracts zip_path into dest_dir and returns the path of the first
--- subtitle file found inside, or nil
-local function extract_zip(zip_path, dest_dir)
-	make_dir(dest_dir)
-	if is_windows() then
-		run(string.format('tar -xf "%s" -C "%s" 2>nul', zip_path, dest_dir))
-	else
-		run(string.format('unzip -o "%s" -d "%s" >/dev/null 2>&1', zip_path, dest_dir))
-	end
-	local first_any = nil
-	for _, path in ipairs(list_files_recursive(dest_dir)) do
-		local ext = string.lower(string.match(path, "%.(%w+)$") or "")
-		if SUBTITLE_EXTS[ext] then return path end
-		first_any = first_any or path
-	end
-	if first_any then log("zip had no subtitle-looking file; first file was " .. first_any) end
-	return nil
-end
 
 local function attach_subtitle(path)
 	if not (vlc.input and vlc.input.item and vlc.input.add_subtitle) then return false end

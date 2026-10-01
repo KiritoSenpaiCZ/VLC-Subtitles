@@ -14,8 +14,8 @@ Logs in fresh on every request (no session caching).
 
 function descriptor()
 return {
-title = "Titulky.com Subtitles v1.1.0",
-version = "1.1.0",
+title = "Titulky.com Subtitles v1.1.1",
+version = "1.1.1",
 author = "Highflight Studio",
 shortdesc = "Titulky.com subtitles (premium)",
 description = "Search premium.titulky.com and download/apply subtitles.",
@@ -416,7 +416,7 @@ end
 -- VERSION_TAG: shown in the dialog's title bar. Keep it in step with
 -- descriptor().version; if the title bar shows an old version, VLC is
 -- still running an old copy of this file.
-local VERSION_TAG = "v1.1.0"
+local VERSION_TAG = "v1.1.1"
 
 function show_dialog()
 dlg = vlc.dialog("Titulky.com Subtitles (" .. VERSION_TAG .. ")")
@@ -517,14 +517,6 @@ end
 
 local function is_windows()
 return package.config:sub(1, 1) == "\\"
-end
-
-local function downloads_dir()
-if is_windows() then
-return (os.getenv("USERPROFILE") or vlc.config.userdatadir()) .. "/Downloads"
-else
-return (os.getenv("HOME") or vlc.config.userdatadir()) .. "/Downloads"
-end
 end
 
 -- --max-time on every curl call: io.popen blocks VLC's whole UI thread
@@ -844,45 +836,6 @@ if row.release and row.release ~= "" then label = label .. " [" .. row.release .
 if row.date then label = label .. " - " .. row.date end
 if row.author then label = label .. " (" .. row.author .. ")" end
 return label
-end
-
---[[ ---------------- zip extraction ----------------
-premium.titulky.com always wraps the actual subtitle in a zip. Extracted
-with the system unzip (macOS/Linux) or tar (bundled with Windows 10
-1803+, and able to extract zips).
-]]
-
-local SUBTITLE_EXTS = { srt = true, ass = true, ssa = true, sub = true, vtt = true }
-
-local function extract_first_subtitle(zip_path)
-local dest_dir = vlc.config.userdatadir() .. "/titulky_extract_" .. tostring(os.time())
-
-if is_windows() then
-run('mkdir "' .. dest_dir .. '" 2>nul')
-run(string.format('tar -xf "%s" -C "%s"', zip_path, dest_dir))
-else
-run('mkdir -p "' .. dest_dir .. '"')
-run(string.format('unzip -o -j "%s" -d "%s"', zip_path, dest_dir))
-end
-
-local listing
-if is_windows() then
-listing = run('dir /b "' .. dest_dir .. '"') or ""
-else
-listing = run('ls -1 "' .. dest_dir .. '"') or ""
-end
-
-local best = nil
-for fname in string.gmatch(listing, "[^\r\n]+") do
-local ext = string.match(fname, "%.([%a]+)$")
-if ext and SUBTITLE_EXTS[string.lower(ext)] then
-best = fname
-break
-end
-if not best then best = fname end
-end
-if not best or best == "" then return nil end
-return dest_dir .. "/" .. best
 end
 
 --[[ ---------------- actions ---------------- ]]

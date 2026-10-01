@@ -22,8 +22,8 @@ Site notes:
 
 function descriptor()
 	return {
-		title = "Edna Subtitles v1.1.0",
-		version = "1.1.0",
+		title = "Edna Subtitles v1.1.1",
+		version = "1.1.1",
 		author = "Highflight Studio",
 		shortdesc = "Edna subtitles",
 		description = "Search edna.cz and download/apply subtitles.",
@@ -424,7 +424,7 @@ local function guess_title_from_playing()
 end
 
 function show_dialog()
-	dlg = vlc.dialog("Edna Subtitles v1.1.0")
+	dlg = vlc.dialog("Edna Subtitles v1.1.1")
 	local saved_username, saved_password = load_credentials()
 	local guessed_title = guess_title_from_playing()
 
@@ -555,14 +555,6 @@ local function copy_to_clipboard(text)
 	p:write(text)
 	p:close()
 	return true
-end
-
-local function downloads_dir()
-	if is_windows() then
-		return (os.getenv("USERPROFILE") or vlc.config.userdatadir()) .. "/Downloads"
-	else
-		return (os.getenv("HOME") or vlc.config.userdatadir()) .. "/Downloads"
-	end
 end
 
 -- edna.cz needs a realistic browser User-Agent to behave normally.

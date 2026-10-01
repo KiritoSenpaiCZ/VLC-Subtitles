@@ -34,7 +34,7 @@ Debug: enable VLC's debug log (Tools -> Messages, verbosity 2) and look for
 lines starting with "[LegieKondor]".
 ]]
 
-local VERSION = "1.0.0"
+local VERSION = "1.0.1"
 local TAG = "[LegieKondor]"
 local PREFIX = "legiekondor" -- file-name prefix for everything this extension creates
 local BASE_URL = "https://anime4.legiekondor.cz"
@@ -104,14 +104,6 @@ local function run(cmd, log_line)
 	local out = p:read("*a")
 	p:close()
 	return out
-end
-
-local function file_size(path)
-	local f = io.open(path, "rb")
-	if not f then return 0 end
-	local size = f:seek("end") or 0
-	f:close()
-	return size
 end
 
 local function read_file(path)
@@ -223,14 +215,6 @@ local function cleanup_old_subtitles()
 end
 
 --[[ ---------------- text helpers ---------------- ]]
-
-local function urlencode(str)
-	if str == nil then return "" end
-	str = string.gsub(str, "([^%w%-%_%.%~])", function(c)
-		return string.format("%%%02X", string.byte(c))
-	end)
-	return str
-end
 
 -- UTF-8 encoding of a code point (Lua 5.1 has no utf8 library)
 local function utf8_char(cp)

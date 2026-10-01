@@ -10,8 +10,8 @@ Logs in fresh on every request (no session caching).
 
 function descriptor()
 return {
-title = "Hiyori Subtitles v1.1.0",
-version = "1.1.0",
+title = "Hiyori Subtitles v1.1.1",
+version = "1.1.1",
 author = "Highflight Studio",
 shortdesc = "Hiyori subtitles",
 description = "Search hiyori.cz and download/apply subtitles.",
@@ -408,7 +408,7 @@ return name
 end
 
 function show_dialog()
-dlg = vlc.dialog("Hiyori Subtitles v1.1.0")
+dlg = vlc.dialog("Hiyori Subtitles v1.1.1")
 local saved_username, saved_password = load_credentials()
 local guessed_title = guess_title_from_playing()
 
@@ -506,14 +506,6 @@ if not p then return false end
 p:write(text)
 p:close()
 return true
-end
-
-local function downloads_dir()
-if is_windows() then
-return (os.getenv("USERPROFILE") or vlc.config.userdatadir()) .. "/Downloads"
-else
-return (os.getenv("HOME") or vlc.config.userdatadir()) .. "/Downloads"
-end
 end
 
 --[[ ---------------- credentials ----------------
