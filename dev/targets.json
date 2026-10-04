@@ -17,6 +17,17 @@
       "VLC-Hanabi/hanabi.lua",
       "VLC-LegieKondor/legiekondor.lua",
       "VLC-NyaSub/nyasub.lua"
+    ],
+    "season_title": [
+      "VLC-Edna/edna.lua",
+      "VLC-HNS/hns.lua",
+      "VLC-Hanabi/hanabi.lua",
+      "VLC-Hiyori/hiyori.lua",
+      "VLC-Kamui/kamui.lua",
+      "VLC-LegieKondor/legiekondor.lua",
+      "VLC-NyaSub/nyasub.lua",
+      "VLC-Titulky/titulky.lua",
+      "VLC-Wosir/wosir.lua"
     ]
   },
   "copy_to": [

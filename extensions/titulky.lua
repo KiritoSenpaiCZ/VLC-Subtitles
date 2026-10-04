@@ -15,8 +15,8 @@ block); login() itself always starts from an empty cookie jar.
 
 function descriptor()
 	return {
-		title = "Titulky.com Subtitles v1.3.0",
-		version = "1.3.0",
+		title = "Titulky.com Subtitles v1.3.1",
+		version = "1.3.1",
 		author = "Highflight Studio",
 		shortdesc = "Titulky.com subtitles (premium)",
 		description = "Search premium.titulky.com and download/apply subtitles.",
@@ -534,7 +534,61 @@ end
 -- VERSION_TAG: shown in the dialog's title bar. Keep it in step with
 -- descriptor().version; if the title bar shows an old version, VLC is
 -- still running an old copy of this file.
-local VERSION_TAG = "v1.3.0"
+local VERSION_TAG = "v1.3.1"
+
+-- >>> shared block "season_title" - edit dev/shared/season_title.lua in VLC-Subtitles, then run dev/sync.py
+-- removes a season / cour ending from a show title and returns the base
+-- title plus the season number (nil when none), e.g. "Tensei Shitara Slime
+-- Datta Ken 4th Season Part 1 & 2" -> "Tensei Shitara Slime Datta Ken", 4.
+-- The site searches need every word to match, so the full name finds
+-- nothing. "Part N" (a cour split) is dropped without giving a season.
+local SEASON_SEP = "[%s:%-]*"
+local SEASON_PARTS = {
+	"%f[%a]part%s*%d+%s*&%s*%d+%s*$",
+	"%f[%a]part%s*%d+%s*and%s*%d+%s*$",
+	"%f[%a]part%s*%d+%s*%+%s*%d+%s*$",
+	"%f[%a]part%s*%d+%s*$",
+}
+local SEASON_ENDINGS = {
+	"%f[%w](%d%d?)%a%a%s+season$",
+	"%f[%a]season%s*(%d%d?)$",
+	"%f[%a]s(%d%d?)$",
+}
+
+local function season_cut(text, patterns)
+	local lower = string.lower(text)
+	for _, p in ipairs(patterns) do
+		local s, _, n = string.find(lower, SEASON_SEP .. p)
+		if s then return string.sub(text, 1, s - 1), n end
+	end
+	return text, nil
+end
+
+local function split_season_title(title)
+	if not title then return title, nil end
+	local base = string.match(title, "^%s*(.-)%s*$")
+	base = season_cut(base, SEASON_PARTS)
+	local base2, n = season_cut(base, SEASON_ENDINGS)
+	base = season_cut(base2, SEASON_PARTS)
+	base = string.gsub(base, "[%s:%-]+$", "")
+	base = string.match(base, "^%s*(.-)%s*$")
+	if base == "" then return title, nil end
+	return base, n and tonumber(n) or nil
+end
+
+-- puts the entries whose own title names the wanted season (a title without
+-- one counts as season 1) first, keeping the order otherwise
+local function season_first(items, season, title_of)
+	if not season then return items end
+	local wanted, rest = {}, {}
+	for _, item in ipairs(items) do
+		local _, n = split_season_title(title_of(item) or "")
+		table.insert((n or 1) == season and wanted or rest, item)
+	end
+	for _, item in ipairs(rest) do table.insert(wanted, item) end
+	return wanted
+end
+-- <<< shared block "season_title"
 
 function show_dialog()
 	dlg = vlc.dialog("Titulky.com Subtitles (" .. VERSION_TAG .. ")")
@@ -974,7 +1028,8 @@ function do_search()
 
 	status_label:set_text(L("Searching...", "Hledám..."))
 	dlg:update()
-	local search_url = "https://premium.titulky.com/?Fulltext=" .. urlencode(query)
+	local base, season = split_season_title(query)
+	local search_url = "https://premium.titulky.com/?Fulltext=" .. urlencode(base)
 		.. "&exact=&Autor=&Rok=&IMDB=&Serial=&Jazyk=&ASchvalene=&action=search"
 	local html = get(search_url)
 	if html == nil then
@@ -989,6 +1044,7 @@ function do_search()
 		titles = html and parse_premium_titles(html) or {}
 	end
 
+	titles = season_first(titles, season, function(t) return t.title end)
 	if #titles == 0 then
 		sub_rows = {}
 		results_list:clear()

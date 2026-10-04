@@ -34,8 +34,8 @@ block); login() itself always starts from an empty cookie jar.
 
 function descriptor()
 	return {
-		title = "Kamui Subtitles v1.3.0",
-		version = "1.3.0",
+		title = "Kamui Subtitles v1.3.1",
+		version = "1.3.1",
 		author = "Highflight Studio",
 		shortdesc = "Kamui-Subs subtitles",
 		description = "Search kamui-subs.cz and download/apply subtitles.",
@@ -543,8 +543,62 @@ local function guess_title_from_playing()
 	return name
 end
 
+-- >>> shared block "season_title" - edit dev/shared/season_title.lua in VLC-Subtitles, then run dev/sync.py
+-- removes a season / cour ending from a show title and returns the base
+-- title plus the season number (nil when none), e.g. "Tensei Shitara Slime
+-- Datta Ken 4th Season Part 1 & 2" -> "Tensei Shitara Slime Datta Ken", 4.
+-- The site searches need every word to match, so the full name finds
+-- nothing. "Part N" (a cour split) is dropped without giving a season.
+local SEASON_SEP = "[%s:%-]*"
+local SEASON_PARTS = {
+	"%f[%a]part%s*%d+%s*&%s*%d+%s*$",
+	"%f[%a]part%s*%d+%s*and%s*%d+%s*$",
+	"%f[%a]part%s*%d+%s*%+%s*%d+%s*$",
+	"%f[%a]part%s*%d+%s*$",
+}
+local SEASON_ENDINGS = {
+	"%f[%w](%d%d?)%a%a%s+season$",
+	"%f[%a]season%s*(%d%d?)$",
+	"%f[%a]s(%d%d?)$",
+}
+
+local function season_cut(text, patterns)
+	local lower = string.lower(text)
+	for _, p in ipairs(patterns) do
+		local s, _, n = string.find(lower, SEASON_SEP .. p)
+		if s then return string.sub(text, 1, s - 1), n end
+	end
+	return text, nil
+end
+
+local function split_season_title(title)
+	if not title then return title, nil end
+	local base = string.match(title, "^%s*(.-)%s*$")
+	base = season_cut(base, SEASON_PARTS)
+	local base2, n = season_cut(base, SEASON_ENDINGS)
+	base = season_cut(base2, SEASON_PARTS)
+	base = string.gsub(base, "[%s:%-]+$", "")
+	base = string.match(base, "^%s*(.-)%s*$")
+	if base == "" then return title, nil end
+	return base, n and tonumber(n) or nil
+end
+
+-- puts the entries whose own title names the wanted season (a title without
+-- one counts as season 1) first, keeping the order otherwise
+local function season_first(items, season, title_of)
+	if not season then return items end
+	local wanted, rest = {}, {}
+	for _, item in ipairs(items) do
+		local _, n = split_season_title(title_of(item) or "")
+		table.insert((n or 1) == season and wanted or rest, item)
+	end
+	for _, item in ipairs(rest) do table.insert(wanted, item) end
+	return wanted
+end
+-- <<< shared block "season_title"
+
 function show_dialog()
-	dlg = vlc.dialog("Kamui Subtitles v1.3.0")
+	dlg = vlc.dialog("Kamui Subtitles v1.3.1")
 	local saved_username, saved_password = load_credentials()
 	hf_remember_credentials(nil, saved_username, saved_password)
 	local saved_zippw = load_zip_password()
@@ -787,7 +841,9 @@ end
 local function login(username, password)
 	os.remove(cookie_jar())
 
-	local login_page = get("https://kamui-subs.cz/log-in/")
+	-- the site's page cache serves an old copy of the login page whose
+	-- _wpnonce expires after about a day; any query parameter skips the cache
+	local login_page = get("https://kamui-subs.cz/log-in/?nocache=" .. os.time())
 	if login_page == nil then return false end
 
 	local form_id = string.match(login_page, 'name="form_id"%s+[^>]-value="(%d+)"')
@@ -899,13 +955,14 @@ function do_search()
 
 	status_label:set_text(L("Searching...", "Hledám..."))
 	dlg:update()
-	local html = get("https://kamui-subs.cz/?s=" .. urlencode(query))
+	local base, season = split_season_title(query)
+	local html = get("https://kamui-subs.cz/?s=" .. urlencode(base))
 	if html == nil then
 		status_label:set_text(L("Search request failed to run (see debug log).", "Hledání se nepodařilo spustit (podrobnosti v logu)."))
 		return
 	end
 
-	show_pages = parse_search_results(html)
+	show_pages = season_first(parse_search_results(html), season, function(s) return s.title end)
 	vlc.msg.dbg("[Kamui] search '" .. query .. "' -> " .. #show_pages .. " page match(es)")
 
 	results_list:clear()
